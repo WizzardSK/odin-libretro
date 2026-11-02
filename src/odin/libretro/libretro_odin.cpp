@@ -78,8 +78,12 @@ std::unique_ptr<vk::Context> vk_card;
 const retro_hw_render_interface_vulkan *vk_iface;
 struct VkOutput {
 	vk::Image image;
+	/* What set_image is given: the frontend keeps the pointer, and reads it
+	 * again after retro_run (a screenshot, a frame shown again) */
+	retro_vulkan_image handed{};
 };
-std::vector<VkOutput> vk_outputs;
+/* A fixed array: the frontend keeps a pointer into it */
+std::array<VkOutput, 32> vk_outputs;
 
 void
 log(retro_log_level level, const char *fmt, ...)
@@ -717,9 +721,10 @@ vk_destroy_outputs()
 		return;
 	vk_card->send_and_wait();
 	for (VkOutput &out : vk_outputs) {
-		vk_card->destroy_image(out.image);
+		if (out.image.image)
+			vk_card->destroy_image(out.image);
+		out = {};
 	}
-	vk_outputs.clear();
 }
 
 /* Negotiation interface 2: the instance at Vulkan 1.3 and a device with
@@ -858,8 +863,10 @@ present_vk(HostPicture picture)
 	}
 	vk_iface->wait_sync_index(vk_iface->handle);
 	const uint32_t index = vk_iface->get_sync_index(vk_iface->handle);
-	if (index >= vk_outputs.size())
-		vk_outputs.resize(index + 1);
+	if (index >= vk_outputs.size()) {
+		video_cb(nullptr, picture.w, picture.h, 0);
+		return;
+	}
 	VkOutput &out = vk_outputs[index];
 	if (out.image.w != picture.w || out.image.h != picture.h) {
 		vk_card->destroy_image(out.image);
@@ -875,12 +882,6 @@ present_vk(HostPicture picture)
 
 	vk_card->barrier(cb, *from, vk::COPIED_FROM);
 	vk_card->barrier(cb, out.image, vk::COPIED_TO);
-	static const bool test_red = std::getenv("ODIN_LR_VK_RED") != nullptr; /* TEMP */
-	if (test_red) {
-		const VkClearColorValue red{ { 1.0f, 0.0f, 0.0f, 1.0f } };
-		const VkImageSubresourceRange range{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-		vk_card->fn().vkCmdClearColorImage(cb, out.image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &red, 1, &range);
-	} else
 	vk_card->fn().vkCmdCopyImage(cb, from->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, out.image.image,
 	                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 	vk_card->barrier(cb, out.image, vk::SAMPLED);
@@ -888,7 +889,8 @@ present_vk(HostPicture picture)
 	 * barrier above orders the frontend's read of the image after, as the
 	 * vita3k core does: no semaphore, which RetroArch need not wait for */
 	vk_card->end_frame({});
-	retro_vulkan_image image{};
+	retro_vulkan_image &image = out.handed;
+	image = {};
 	image.image_view = out.image.view;
 	image.image_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 	image.create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
