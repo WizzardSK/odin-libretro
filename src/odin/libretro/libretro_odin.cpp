@@ -24,6 +24,9 @@
 #include <cstdarg>
 #include <cstdio>
 #include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -130,6 +133,25 @@ class LibretroScreen : public HikaruScreen {
 public:
 	std::unique_ptr<Renderer> renderer;
 
+	/* With the board on a thread of its own (Threaded Board), the frame
+	 * before is drawn while the board runs the next one, as on the
+	 * desktop: the board waits for that drawing before it changes what the
+	 * drawing reads (Display::finish) */
+	void set_drawing(bool on)
+	{
+		{
+			std::lock_guard lock(m_mutex);
+			m_drawing = on;
+		}
+		if (!on)
+			m_done.notify_all();
+	}
+	void wait_drawing()
+	{
+		std::unique_lock lock(m_mutex);
+		m_done.wait(lock, [this] { return !m_drawing; });
+	}
+
 	void list_launched() override
 	{
 		if (renderer)
@@ -137,12 +159,14 @@ public:
 	}
 	void before_texture_write(unsigned bank, uint32_t x, uint32_t y, uint32_t w, uint32_t h) override
 	{
+		wait_drawing();
 		if (renderer)
 			renderer->invalidate_textures(bank, x, y, w, h);
 	}
-	void before_memory_changes() override {}
+	void before_memory_changes() override { wait_drawing(); }
 	void memory_changed() override
 	{
+		wait_drawing();
 		if (renderer)
 			renderer->invalidate_textures(-1);
 	}
@@ -174,6 +198,76 @@ public:
 			renderer->load(pictures, counters);
 		return true;
 	}
+
+private:
+	std::mutex m_mutex;
+	std::condition_variable m_done;
+	bool m_drawing = false;
+};
+
+/* ─── The board's own thread (Threaded Board) ──────────────────────────── */
+
+class BoardThread {
+public:
+	~BoardThread() { stop(); }
+
+	void start(Hikaru &board)
+	{
+		m_board = &board;
+		m_quit = false;
+		m_thread = std::thread([this] { loop(); });
+	}
+	void stop()
+	{
+		if (!m_thread.joinable())
+			return;
+		wait();
+		{
+			std::lock_guard lock(m_mutex);
+			m_quit = true;
+		}
+		m_cv.notify_all();
+		m_thread.join();
+	}
+	bool running() const { return m_thread.joinable(); }
+	/* The next frame run on the thread */
+	void run_frame()
+	{
+		{
+			std::lock_guard lock(m_mutex);
+			m_go = m_busy = true;
+		}
+		m_cv.notify_all();
+	}
+	/* Until the frame it runs is done */
+	void wait()
+	{
+		std::unique_lock lock(m_mutex);
+		m_cv.wait(lock, [this] { return !m_busy; });
+	}
+
+private:
+	void loop()
+	{
+		std::unique_lock lock(m_mutex);
+		for (;;) {
+			m_cv.wait(lock, [this] { return m_go || m_quit; });
+			if (m_quit)
+				return;
+			m_go = false;
+			lock.unlock();
+			m_board->run_frame();
+			lock.lock();
+			m_busy = false;
+			m_cv.notify_all();
+		}
+	}
+
+	Hikaru *m_board = nullptr;
+	std::thread m_thread;
+	std::mutex m_mutex;
+	std::condition_variable m_cv;
+	bool m_go = false, m_busy = false, m_quit = false;
 };
 
 /* ─── The control panel ────────────────────────────────────────────────── */
@@ -417,6 +511,9 @@ struct Core {
 	std::string system_dir, save_dir;
 	bool context_ready = false;
 	std::vector<int16_t> mixed;
+	BoardThread board_thread;
+	/* Threaded Board: a frame of the board is done and not drawn yet */
+	bool threaded = true, frame_pending = false;
 	/* Core options (read_options) */
 	unsigned scale = 1, anisotropy = 1;
 	DisplayUpscaleMode upscale_mode = DisplayUpscaleMode::SNAP;
@@ -440,6 +537,10 @@ retro_core_option_definition option_defs[] = {
 	  "How the meshes flat to the screen (the HUD, its text) are drawn above 1x: Snap, their corners on the board's pixels (default); Native, over the pixels they cover there; Raw, as fine as the rest.",
 	  { { "snap", "Snap" }, { "native", "Native" }, { "raw", "Raw" }, { nullptr, nullptr } },
 	  "snap" },
+	{ "odin_threaded", "Threaded Board (Restart)",
+	  "The board runs the next frame on a thread of its own while the frame before is drawn, as the desktop Odin does: faster on most machines, one frame more of latency. Off: each frame is run and drawn in turn.",
+	  { { "enabled", "Enabled" }, { "disabled", "Disabled" }, { nullptr, nullptr } },
+	  "enabled" },
 	{ "odin_anisotropy", "Anisotropic Filtering",
 	  "Of the texture filter; Off as on the board.",
 	  { { "1", "Off" }, { "2", "2x" }, { "4", "4x" }, { "8", "8x" }, { "16", "16x" }, { nullptr, nullptr } },
@@ -779,7 +880,13 @@ retro_load_game(const retro_game_info *info)
 	std::transform(folder.begin(), folder.end(), folder.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
 	core->board->keep_in(SaveFolder(((folder == "odin" ? saves : saves / "odin") / name).string()));
 	core->board->reset();
-	log(RETRO_LOG_INFO, "%s (%s) loaded\n", core->game->title.c_str(), name.c_str());
+	/* Taken when the content starts (Restart) */
+	const char *threaded = option_value("odin_threaded");
+	core->threaded = !threaded || std::strcmp(threaded, "disabled") != 0;
+	if (core->threaded)
+		core->board_thread.start(*core->board);
+	log(RETRO_LOG_INFO, "%s (%s) loaded%s\n", core->game->title.c_str(), name.c_str(),
+	    core->threaded ? ", the board on a thread of its own" : "");
 	return true;
 }
 
@@ -790,10 +897,20 @@ retro_unload_game(void)
 {
 	if (!core)
 		return;
+	core->board_thread.stop();
 	if (core->board)
 		core->board->power_off();
 	core->screen.renderer.reset();
 	core.reset();
+}
+
+/* The board at rest between two frames: its thread, if it has one, done
+ * with the frame it runs (which stays to be drawn: frame_pending) */
+static void
+board_at_rest()
+{
+	if (core && core->board_thread.running())
+		core->board_thread.wait();
 }
 
 RETRO_API unsigned retro_get_region(void) { return RETRO_REGION_NTSC; }
@@ -825,16 +942,43 @@ retro_run(void)
 	 * which stops on any error it finds after a frame (gl::check) */
 	while (glGetError() != GL_NO_ERROR)
 		;
-	renderer.begin_frame();
-	core->board->run_frame();
-	renderer.take_frame(core->board->frame(), Renderer::WIDTH, Renderer::HEIGHT);
-	/* As the desktop's Display::draw sets them, right before the drawing */
-	renderer.set_scale(core->scale);
-	renderer.set_upscale_mode(core->upscale_mode);
-	renderer.set_anisotropy(core->anisotropy);
-	renderer.draw_frame();
-	present(renderer.frame_picture());
-	play_sound();
+	const auto draw = [&] {
+		/* As the desktop's Display::draw sets them, right before the drawing */
+		renderer.set_scale(core->scale);
+		renderer.set_upscale_mode(core->upscale_mode);
+		renderer.set_anisotropy(core->anisotropy);
+		renderer.draw_frame();
+	};
+
+	if (!core->threaded) {
+		renderer.begin_frame();
+		core->board->run_frame();
+		renderer.take_frame(core->board->frame(), Renderer::WIDTH, Renderer::HEIGHT);
+		draw();
+		present(renderer.frame_picture());
+		play_sound();
+	} else {
+		/* The frame the thread ran is taken with the board at rest, its
+		 * sound handed over before the next frame clears it; then the
+		 * next frame runs on the thread while this one is drawn */
+		core->board_thread.wait();
+		const bool pending = core->frame_pending;
+
+		if (pending) {
+			renderer.take_frame(core->board->frame(), Renderer::WIDTH, Renderer::HEIGHT);
+			play_sound();
+		}
+		core->screen.set_drawing(pending);
+		renderer.begin_frame();
+		core->board_thread.run_frame();
+		core->frame_pending = true;
+		if (pending) {
+			draw();
+			core->screen.set_drawing(false);
+			present(renderer.frame_picture());
+		} else
+			video_cb(nullptr, Renderer::WIDTH * core->scale, Renderer::HEIGHT * core->scale, 0);
+	}
 
 	/* The frames a second the core ran over the last SPEED_FRAMES, for the
 	 * log: the board's 60 is full speed */
@@ -854,8 +998,11 @@ retro_run(void)
 RETRO_API void
 retro_reset(void)
 {
-	if (core && core->board)
+	if (core && core->board) {
+		board_at_rest();
 		core->board->reset();
+		core->frame_pending = false;
+	}
 }
 
 /* Save states. The board writes and reads them as files (StateFile,
@@ -882,6 +1029,7 @@ state_bytes()
 	const std::string path = state_temp();
 	std::error_code ec;
 
+	board_at_rest();
 	if (!core->board->save_state(path)) {
 		fs::remove(path, ec);
 		return std::nullopt;
@@ -942,7 +1090,9 @@ retro_unserialize(const void *data, size_t size)
 		if (!out)
 			return false;
 	}
+	board_at_rest();
 	const bool ok = core->board->load_state(path);
+	core->frame_pending = false;
 	std::error_code ec;
 
 	fs::remove(path, ec);
