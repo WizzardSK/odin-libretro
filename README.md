@@ -1,10 +1,10 @@
 # Odin libretro core
 
-The libretro core of [Odin](https://github.com/Tovarichtch/Odin), the SEGA Hikaru emulator: the board and its OpenGL renderer as `odin_libretro`, without the program's window, menu and SDL.
+The libretro core of [Odin](https://github.com/Tovarichtch/Odin), the SEGA Hikaru emulator: the board and its OpenGL and Vulkan renderers as `odin_libretro`, without the program's window, menu and SDL.
 
 Odin's own README is in [README](README), how to build and run the desktop program in [INSTALL](INSTALL).
 
-Downloads: the cores for Linux x86_64 and aarch64 and Windows x86_64, with `odin_libretro.info`, are in the [releases](https://github.com/WizzardSK/odin-libretro/releases). The Linux aarch64 core is tested in RetroArch (Planet Harriers at full speed with Threaded Board); the others are built but not tried yet. Reports go to the odin-libretro thread in #support-forum on the libretro Discord, or to this repository's issues.
+Downloads: the cores for Linux x86_64 and aarch64 and Windows x86_64, with `odin_libretro.info`, are in the [releases](https://github.com/WizzardSK/odin-libretro/releases). The Linux aarch64 core is tested in RetroArch with both renderers (Planet Harriers at full speed with Threaded Board); the others are built but not tried yet. Reports go to the odin-libretro thread in #support-forum on the libretro Discord, or to this repository's issues.
 
 ## Building
 
@@ -20,7 +20,7 @@ The core is `build/odin_libretro.so` (`.dll` on Windows); `odin_libretro.info` g
 
 - Load a game's MAME set as content: `airtrix`, `airtrixo`, `braveff`, `pharrier`, `sgnascar`, `sgnascaro`, `swracer` or `von4` (`.zip`, `.7z` or a folder).
 - The shared sets `hikaru` and `mie` (and the optional `jvs13551`, `18wheelr`, `srally2`) go beside the game or in `system/odin`. A missing file is named in RetroArch's log with the set it belongs to.
-- RetroArch's video driver has to be `glcore` (OpenGL 4.3).
+- RetroArch's video driver has to be `vulkan` (Vulkan 1.3, or 1.1 with dynamic rendering, synchronization2 and the extended dynamic state) or `glcore` (OpenGL 4.3).
 - What the board keeps without power (its EEPROMs, backup RAM, Virtual-On's card) goes to `saves/odin/<game>`.
 - Save states work; a state loads only into the build of the core that made it.
 
@@ -44,6 +44,7 @@ The controls of each game come from its list (`odin-games.json`), by their roles
 
 ## Core options
 
+- **Renderer** (Restart): Automatic (default), the one of RetroArch's video driver; OpenGL; Vulkan. When RetroArch cannot give the one asked for, the core runs on the other with a notice.
 - **Internal Resolution**: 1x (640x480) to 6x (3840x2880), on the fly.
 - **HUD at Higher Resolutions**: Snap (default), Native or Raw.
 - **Threaded Board** (Restart): Enabled (default), the board runs the next frame on a thread of its own while the frame before is drawn, as the desktop Odin does; faster, one frame more of latency. Disabled: each frame run and drawn in turn.
@@ -51,4 +52,4 @@ The controls of each game come from its list (`odin-games.json`), by their roles
 
 ## Not there yet
 
-Vulkan, a macOS build, network links between cabinets, force feedback.
+A macOS build, network links between cabinets, force feedback.
