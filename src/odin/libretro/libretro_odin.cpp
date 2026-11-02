@@ -416,7 +416,6 @@ struct Core {
 	LibretroGraphics graphics;
 	std::string system_dir, save_dir;
 	bool context_ready = false;
-	GLuint read_fbo = 0;
 	std::vector<int16_t> mixed;
 	/* Core options (read_options) */
 	unsigned scale = 1, anisotropy = 1;
@@ -548,9 +547,6 @@ context_destroy()
 	if (!core)
 		return;
 	core->screen.renderer.reset();
-	if (core->read_fbo)
-		glDeleteFramebuffers(1, &core->read_fbo);
-	core->read_fbo = 0;
 	core->context_ready = false;
 }
 
@@ -572,10 +568,10 @@ present(HostPicture picture)
 		core->shown_w = picture.w;
 		core->shown_h = picture.h;
 	}
-	if (!core->read_fbo)
-		glGenFramebuffers(1, &core->read_fbo);
-	glBindFramebuffer(GL_READ_FRAMEBUFFER, core->read_fbo);
-	glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, picture.id, 0);
+	/* The picture is the renderer's framebuffer (DrawingGl::frame_picture),
+	 * read from as the desktop's GlGraphics::read does */
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, picture.id);
+	glReadBuffer(GL_COLOR_ATTACHMENT0);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(hw_render.get_current_framebuffer()));
 	glDisable(GL_SCISSOR_TEST);
 	glBlitFramebuffer(0, 0, static_cast<GLint>(picture.w), static_cast<GLint>(picture.h), 0, 0,
