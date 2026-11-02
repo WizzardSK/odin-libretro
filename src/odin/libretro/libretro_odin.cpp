@@ -878,8 +878,24 @@ present_vk(HostPicture picture)
 	vk_card->barrier(cb, out.image, vk::COPIED_TO);
 	vk_card->fn().vkCmdCopyImage(cb, from->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, out.image.image,
 	                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+	/* TEMP probe: the sum of the picture's pixels at frame 600 */
+	static unsigned probe_frames = 0;
+	vk::Buffer *probe = nullptr;
+	if (++probe_frames == 600) {
+		probe = &vk_card->staging(VkDeviceSize{ picture.w } * picture.h * 4);
+		const VkBufferImageCopy copy{ 0, 0, 0, { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 }, { 0, 0, 0 }, { picture.w, picture.h, 1 } };
+		vk_card->fn().vkCmdCopyImageToBuffer(cb, out.image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, probe->buffer, 1, &copy);
+	}
 	vk_card->barrier(cb, out.image, vk::SAMPLED);
 	vk_card->end_frame({ VK_NULL_HANDLE, out.done });
+	if (probe) {
+		vk_card->send_and_wait();
+		uint64_t sum = 0;
+		for (size_t i = 0; i < size_t{ picture.w } * picture.h * 4; i++)
+			sum += probe->bytes[i];
+		log(RETRO_LOG_INFO, "TEMP probe: picture %ux%u, pixel sum %llu, first %02x%02x%02x%02x\n", picture.w, picture.h,
+		    static_cast<unsigned long long>(sum), probe->bytes[0], probe->bytes[1], probe->bytes[2], probe->bytes[3]);
+	}
 
 	retro_vulkan_image image{};
 	image.image_view = out.image.view;
