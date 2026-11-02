@@ -502,7 +502,19 @@ create_renderer()
 		return;
 
 	Renderer::Memory memory;
-	Renderer::Options looks;
+	/* As the desktop's Display::attach sets them with none of its
+	 * environment variables: no logs, fingerprints or debug keys */
+	Renderer::Options looks{};
+
+	looks.log = false;
+	looks.log_frame = 0;
+	looks.list_fp = false;
+	looks.list_dump = -1;
+	looks.lists_test = false;
+	looks.times = false;
+	looks.debug_keys = false;
+	looks.key_down = nullptr;
+	looks.ctx = nullptr;
 
 	memory.fb = core->board->framebuffer_ram();
 	memory.fb_writes = &core->board->framebuffer_writes();
