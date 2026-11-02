@@ -625,6 +625,12 @@ struct Core {
 	std::string system_dir, save_dir;
 	bool context_ready = false;
 	std::vector<int16_t> mixed;
+	/* Sound Mode and Optional Board Level (empty: Automatic) */
+	std::string sound_mode = "auto";
+	std::optional<double> option_level;
+	/* Audio Thread: the frames' sound buffered for the frontend's audio
+	 * thread (audio_thread_callback) */
+	bool audio_thread = false;
 	/* Rumble (core option): the frontend's interface, and what each pad
 	 * was last told; the desktop's shakes (Controls::show) */
 	retro_set_rumble_state_t set_rumble = nullptr;
@@ -672,10 +678,23 @@ retro_core_option_definition option_defs[] = {
 	  "The pads shake as the cabinet does: its rumble outputs, the vibration device the optional sound board drives (Star Wars Racer Arcade) and the shocks of the steering wheel (NASCAR Arcade), as the desktop Odin shakes a gamepad.",
 	  { { "enabled", "Enabled" }, { "disabled", "Disabled" }, { nullptr, nullptr } },
 	  "enabled" },
+	{ "odin_sound_mode", "Sound Mode",
+	  "For the games with an optional sound board (Planet Harriers, Star Wars Racer Arcade, NASCAR Arcade): the main board, the optional one, or both mixed, at Optional Board Level. Automatic: both where the cabinet has speakers for the optional board, else the main one, as the desktop Odin. The desktop's Quad (four channels) has no place in RetroArch's stereo.",
+	  { { "auto", "Automatic" }, { "main", "Main" }, { "option", "Optional" }, { "mix", "Both" }, { nullptr, nullptr } },
+	  "auto" },
+	{ "odin_option_level", "Optional Board Level",
+	  "The optional board against the main one when Sound Mode mixes both: Automatic, the level of the game list (measured in a race), or -12 dB to +12 dB.",
+	  { { "auto", "Automatic" }, { "-12", "-12 dB" }, { "-9", "-9 dB" }, { "-6", "-6 dB" }, { "-3", "-3 dB" }, { "0", "0 dB" },
+	    { "3", "+3 dB" }, { "6", "+6 dB" }, { "9", "+9 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
+	  "auto" },
 	{ "odin_anisotropy", "Anisotropic Filtering",
 	  "Of the texture filter; Off as on the board.",
 	  { { "1", "Off" }, { "2", "2x" }, { "4", "4x" }, { "8", "8x" }, { "16", "16x" }, { nullptr, nullptr } },
 	  "1" },
+	{ "odin_audio_thread", "Audio Thread (Restart)",
+	  "The sound handed to RetroArch's audio thread as the board makes it, instead of in each frame: RetroArch then plays what is buffered while a frame takes long (a shader compiled), where the frames' own sound would stutter. Off by default.",
+	  { { "disabled", "Disabled" }, { "enabled", "Enabled" }, { nullptr, nullptr } },
+	  "disabled" },
 	{ nullptr, nullptr, nullptr, { { nullptr, nullptr } }, nullptr },
 };
 
@@ -694,6 +713,10 @@ read_options(Core &c)
 		c.scale = std::clamp<unsigned>(static_cast<unsigned>(std::atoi(v)), 1, MOST_SCALE);
 	if (const char *v = option_value("odin_anisotropy"))
 		c.anisotropy = std::clamp<unsigned>(static_cast<unsigned>(std::atoi(v)), 1, 16);
+	if (const char *v = option_value("odin_sound_mode"))
+		c.sound_mode = v;
+	if (const char *v = option_value("odin_option_level"))
+		c.option_level = std::strcmp(v, "auto") ? std::optional<double>(std::atof(v)) : std::nullopt;
 	if (const char *v = option_value("odin_rumble"))
 		c.rumble = std::strcmp(v, "disabled") != 0;
 	if (const char *v = option_value("odin_upscale_mode"))
@@ -1138,93 +1161,51 @@ present(HostPicture picture)
 	video_cb(RETRO_HW_FRAME_BUFFER_VALID, picture.w, picture.h, 0);
 }
 
-/* The sound of the frame: the main board's, with the optional board's in the
- * mix at the level of the list where the cabinet has speakers for it (the
- * desktop's -o mix); 44 100 pairs a second */
-/* How hard the optional board's sound would shake a vibration device, 0 to
- * 0xFFFF, and a level smoothed over the frames (AudioOut::shake_of,
- * AudioOut::smoothed, which come with the desktop's sound) */
-uint16_t
-shake_of(std::span<const int16_t> stereo)
-{
-	const size_t frames = stereo.size() / 2;
-	double sum = 0;
+/* The sound buffered for the frontend's audio thread (Audio Thread), at
+ * most half a second of it */
+std::mutex audio_mutex;
+std::vector<int16_t> audio_buffer;
+constexpr size_t AUDIO_MOST = 44100;
 
-	for (size_t i = 0; i < frames; i++) {
-		const double both = (stereo[2 * i] + stereo[2 * i + 1]) / 2.0;
-		sum += both * both;
-	}
-	const double level = frames ? std::sqrt(sum / static_cast<double>(frames)) / 32768.0 : 0;
-
-	return level < 1.0 / 32 ? 0 : static_cast<uint16_t>(std::lround(std::min(1.0, level * 2) * 0xFFFF));
-}
-
-uint16_t
-smoothed(uint16_t was, uint16_t now)
-{
-	return static_cast<uint16_t>((3 * was + now) / 4);
-}
-
-/* The pads shaken by the frame's outputs, as Controls::show shakes the
- * desktop's gamepads: a rumble output of a player at 0xC000, and player 1's
- * pad also as the vibration device the optional board's sound drives and
- * the jolts of the drive board's wheel */
-void
-shake_pads()
-{
-	constexpr uint16_t RUMBLE = 0xC000, FELT_STEP = 0x1000;
-	Core &c = *core;
-
-	if (!c.set_rumble)
-		return;
-	uint16_t strength[2] = {};
-	if (c.rumble) {
-		const std::span<const uint8_t> outputs = c.board->io_outputs();
-		const Game &game = *c.game;
-		const bool still = any_on(game.outputs, GameOutput::Role::MUTE, outputs);
-
-		c.felt_level = game.option_vibration && !still ? smoothed(c.felt_level, shake_of(c.board->sound(true))) : 0;
-		const int force = game.drive_first_output ?
-		                          DriveBoard::force_of(DriveBoard::command(outputs, game.drive_first_output)) :
-		                          0;
-		const uint16_t wheel = c.panel.steer_channel();
-		c.wheel_moves[c.wheel_move++ % c.wheel_moves.size()] = std::abs(wheel - c.wheel_was) / 65535.0;
-		c.wheel_was = wheel;
-		const double moved = *std::max_element(c.wheel_moves.begin(), c.wheel_moves.end());
-		const uint16_t jolt = DriveBoard::jolt_of(force - c.force_was, moved);
-		c.force_was = force;
-		c.drive_level = std::max(jolt, smoothed(c.drive_level, jolt));
-		const uint16_t felt = static_cast<uint16_t>(std::max(c.felt_level, c.drive_level) / FELT_STEP * FELT_STEP);
-
-		for (unsigned player = 0; player < 2; player++) {
-			const bool on = any_on(game.outputs, GameOutput::Role::RUMBLE, outputs, static_cast<int>(player));
-			strength[player] = std::max<uint16_t>(on ? RUMBLE : 0, player ? 0 : felt);
-		}
-	}
-	for (unsigned player = 0; player < 2; player++) {
-		if (strength[player] == c.rumbling[player])
-			continue;
-		c.set_rumble(player, RETRO_RUMBLE_STRONG, strength[player]);
-		c.set_rumble(player, RETRO_RUMBLE_WEAK, strength[player]);
-		c.rumbling[player] = strength[player];
-	}
-}
-
+/* The sound of the frame, as the desktop's AudioOut::interleave makes it:
+ * the main board, the optional one, or both mixed with the optional board at
+ * its level (Sound Mode, Optional Board Level; Automatic: both where the
+ * cabinet has speakers for it, at the level of the list); 44 100 pairs a
+ * second */
 void
 play_sound()
 {
 	const std::vector<int16_t> &main = core->board->sound(false);
 	const std::vector<int16_t> &option = core->board->sound(true);
+	const Game &game = *core->game;
 	std::vector<int16_t> &out = core->mixed;
+	std::string mode = core->sound_mode;
 
-	out.assign(main.begin(), main.end());
-	if (core->game->option_speakers && !option.empty()) {
-		const double gain = std::pow(10.0, core->game->option_level / 20.0);
+	if (mode == "auto")
+		mode = game.option_speakers ? "mix" : "main";
+	const double level = core->option_level.value_or(game.option_level);
+	const int32_t gain = static_cast<int32_t>(std::lround(32768 * std::pow(10.0, level / 20.0)));
+	const auto at = [](const std::vector<int16_t> &v, size_t i) { return i < v.size() ? v[i] : int16_t{ 0 }; };
 
-		if (out.size() < option.size())
-			out.resize(option.size(), 0);
-		for (size_t i = 0; i < option.size(); i++)
-			out[i] = static_cast<int16_t>(std::clamp(std::lround(out[i] + option[i] * gain), -32768L, 32767L));
+	out.clear();
+	for (size_t i = 0; i < main.size(); i++) {
+		const int16_t m = main[i], o = at(option, i);
+		if (mode == "option")
+			out.push_back(o);
+		else if (mode == "mix")
+			out.push_back(static_cast<int16_t>(
+				std::clamp<int64_t>(m + ((static_cast<int64_t>(o) * gain) >> 15), -0x8000, 0x7FFF)));
+		else
+			out.push_back(m);
+	}
+	out.resize(out.size() & ~size_t{ 1 });
+
+	if (core->audio_thread) {
+		std::lock_guard lock(audio_mutex);
+		audio_buffer.insert(audio_buffer.end(), out.begin(), out.end());
+		if (audio_buffer.size() > 2 * AUDIO_MOST)
+			audio_buffer.erase(audio_buffer.begin(), audio_buffer.end() - 2 * AUDIO_MOST);
+		return;
 	}
 	for (size_t done = 0; done + 1 < out.size();) {
 		const size_t frames = (out.size() - done) / 2;
@@ -1235,6 +1216,29 @@ play_sound()
 		done += taken * 2;
 	}
 }
+
+/* The frontend's audio thread asks for sound (SET_AUDIO_CALLBACK): what the
+ * frames buffered, a chunk at a time */
+void
+audio_thread_callback()
+{
+	int16_t chunk[1024 * 2];
+	size_t frames = 0;
+
+	{
+		std::lock_guard lock(audio_mutex);
+		frames = std::min<size_t>(audio_buffer.size() / 2, 1024);
+		std::copy_n(audio_buffer.begin(), frames * 2, chunk);
+		audio_buffer.erase(audio_buffer.begin(), audio_buffer.begin() + static_cast<std::ptrdiff_t>(frames * 2));
+	}
+	if (frames && audio_batch_cb)
+		audio_batch_cb(chunk, frames);
+	else
+		std::this_thread::sleep_for(std::chrono::milliseconds(2));
+}
+
+void
+audio_thread_state(bool) {}
 
 } /* namespace */
 
@@ -1379,9 +1383,13 @@ retro_load_game(const retro_game_info *info)
 	else if (renderer_option && !std::strcmp(renderer_option, "opengl"))
 		want_vulkan = false;
 	else {
+		/* OpenGL where RetroArch's driver is one of OpenGL's, Vulkan for
+		 * any other (d3d, metal...), RetroArch then switching to it (NNshi) */
 		unsigned preferred = RETRO_HW_CONTEXT_NONE;
-		want_vulkan = environ_cb(RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER, &preferred) &&
-		              preferred == RETRO_HW_CONTEXT_VULKAN;
+		const bool known = environ_cb(RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER, &preferred);
+		want_vulkan = !(known && (preferred == RETRO_HW_CONTEXT_OPENGL || preferred == RETRO_HW_CONTEXT_OPENGL_CORE ||
+		                          preferred == RETRO_HW_CONTEXT_OPENGLES2 || preferred == RETRO_HW_CONTEXT_OPENGLES3 ||
+		                          preferred == RETRO_HW_CONTEXT_OPENGLES_VERSION));
 	}
 	const auto set_context = [](bool vulkan) {
 		std::memset(&hw_render, 0, sizeof(hw_render));
@@ -1424,6 +1432,16 @@ retro_load_game(const retro_game_info *info)
 	}
 	core->panel.set_game(*core->game);
 	core->panel.describe();
+	{
+		const char *v = option_value("odin_audio_thread");
+		const retro_audio_callback callback{ audio_thread_callback, audio_thread_state };
+		core->audio_thread = v && !std::strcmp(v, "enabled") &&
+		                     environ_cb(RETRO_ENVIRONMENT_SET_AUDIO_CALLBACK, const_cast<retro_audio_callback *>(&callback));
+		std::lock_guard lock(audio_mutex);
+		audio_buffer.clear();
+		if (core->audio_thread)
+			log(RETRO_LOG_INFO, "sound: on RetroArch's audio thread\n");
+	}
 	retro_rumble_interface rumble{};
 	if (environ_cb(RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE, &rumble))
 		core->set_rumble = rumble.set_rumble_state;

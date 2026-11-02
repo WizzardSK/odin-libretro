@@ -45,12 +45,16 @@ The controls of each game come from its list (`odin-games.json`), by their roles
 
 ## Core options
 
-- **Renderer** (Restart): Automatic (default), the one of RetroArch's video driver; OpenGL; Vulkan. When RetroArch cannot give the one asked for, the core runs on the other with a notice.
+- **Renderer** (Restart): Automatic (default), OpenGL where RetroArch's video driver is an OpenGL one and Vulkan for any other; OpenGL; Vulkan. When RetroArch cannot give the one asked for, the core runs on the other with a notice.
 - **Internal Resolution**: 1x (640x480) to 6x (3840x2880), on the fly.
 - **HUD at Higher Resolutions**: Snap (default), Native or Raw.
 - **Threaded Board** (Restart): Enabled (default), the board runs the next frame on a thread of its own while the frame before is drawn, as the desktop Odin does; faster, one frame more of latency. Disabled: each frame run and drawn in turn.
 - **Rumble**: Enabled (default), the pads shake as the cabinet does: its rumble outputs, the vibration device the optional sound board drives (Star Wars Racer Arcade) and the jolts of the steering wheel (NASCAR Arcade).
+- **Sound Mode**: for the games with an optional sound board (Planet Harriers, Star Wars Racer Arcade, NASCAR Arcade): Automatic (default: both mixed where the cabinet has speakers for the optional board, else the main board, as the desktop Odin), Main, Optional or Both. The desktop's Quad (four channels) has no place in RetroArch's stereo.
+- **Optional Board Level**: Automatic (the game list's level) or -12 dB to +12 dB, the optional board in the mix.
 - **Anisotropic Filtering**: Off (default) to 16x.
+
+- **Audio Thread** (Restart): Disabled (default) or Enabled, the sound handed to RetroArch's audio thread, which plays what is buffered while a frame takes long.
 
 ## Not there yet
 
