@@ -779,24 +779,24 @@ retro_core_option_definition option_defs[] = {
 	  { { "enabled", "Enabled" }, { "disabled", "Disabled" }, { nullptr, nullptr } },
 	  "enabled" },
 	{ "odin_pharrier_sound_mode", "Sound Mode",
-	  "Planet Harriers has an optional sound board: Main, the main board alone; Both, the two mixed, the optional one at Optional Board Level; Quad, as the desktop's, four channels: the main board in the front speakers, the optional one in the rear (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both at 0 dB); Optional Only, the optional board alone.",
-	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "Quad" }, { "option", "Optional Only" }, { nullptr, nullptr } },
+	  "Planet Harriers has an optional sound board: Main, the main board alone; Both, the two mixed, the optional one at Optional Board Level; 4.0, as the desktop's Quad: four channels, the main board in the front speakers, the optional one in the rear at Optional Board Level (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both); Optional Only, the optional board alone.",
+	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "4.0" }, { "option", "Optional Only" }, { nullptr, nullptr } },
 	  "mix" },
 	{ "odin_pharrier_option_level", "Optional Board Level",
 	  "The optional sound board of Planet Harriers against the main one, with Sound Mode Both.",
 	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
 	  "0" },
 	{ "odin_swracer_sound_mode", "Sound Mode",
-	  "Star Wars Racer Arcade has an optional sound board: Main, the main board alone; Both, the two mixed, the optional one at Optional Board Level; Quad, as the desktop's, four channels: the main board in the front speakers, the optional one in the rear (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both at 0 dB); Optional Only, the optional board alone.",
-	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "Quad" }, { "option", "Optional Only" }, { nullptr, nullptr } },
+	  "Star Wars Racer Arcade has an optional sound board: Main, the main board alone; Both, the two mixed, the optional one at Optional Board Level; 4.0, as the desktop's Quad: four channels, the main board in the front speakers, the optional one in the rear at Optional Board Level (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both); Optional Only, the optional board alone.",
+	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "4.0" }, { "option", "Optional Only" }, { nullptr, nullptr } },
 	  "mix" },
 	{ "odin_swracer_option_level", "Optional Board Level",
 	  "The optional sound board of Star Wars Racer Arcade against the main one, with Sound Mode Both.",
 	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
 	  "0" },
 	{ "odin_sgnascar_sound_mode", "Sound Mode",
-	  "NASCAR Arcade has an optional sound board: Main, the main board alone; Both, the two mixed, the optional one at Optional Board Level; Quad, as the desktop's, four channels: the main board in the front speakers, the optional one in the rear (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both at 0 dB); Optional Only, the optional board alone.",
-	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "Quad" }, { "option", "Optional Only" }, { nullptr, nullptr } },
+	  "NASCAR Arcade has an optional sound board: Main, the main board alone; Both, the two mixed, the optional one at Optional Board Level; 4.0, as the desktop's Quad: four channels, the main board in the front speakers, the optional one in the rear at Optional Board Level (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both); Optional Only, the optional board alone.",
+	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "4.0" }, { "option", "Optional Only" }, { nullptr, nullptr } },
 	  "mix" },
 	{ "odin_sgnascar_option_level", "Optional Board Level",
 	  "The optional sound board of NASCAR Arcade against the main one, with Sound Mode Both.",
@@ -1416,15 +1416,18 @@ play_sound()
 	const int32_t gain = static_cast<int32_t>(std::lround(32768 * std::pow(10.0, level / 20.0)));
 	const auto at = [](const std::vector<int16_t> &v, size_t i) { return i < v.size() ? v[i] : int16_t{ 0 }; };
 
-	/* Quad: four channels where the frontend takes them, else Both at 0 dB */
+	/* 4.0: four channels where the frontend takes them, the optional board at
+	 * its level too; else Both */
+	const auto scaled = [gain](int16_t o) {
+		return static_cast<int16_t>(std::clamp<int64_t>((static_cast<int64_t>(o) * gain) >> 15, -0x8000, 0x7FFF));
+	};
 	const bool quad = mode == "quad" && audio_multi.batch_int16;
 	const unsigned channels = quad ? 4 : 2;
-	const int32_t mix_gain = mode == "quad" ? 32768 : gain;
 
 	out.clear();
 	if (quad) {
 		for (size_t i = 0; i + 1 < main.size(); i += 2)
-			out.insert(out.end(), { main[i], main[i + 1], at(option, i), at(option, i + 1) });
+			out.insert(out.end(), { main[i], main[i + 1], scaled(at(option, i)), scaled(at(option, i + 1)) });
 	} else
 	for (size_t i = 0; i < main.size(); i++) {
 		const int16_t m = main[i], o = at(option, i);
@@ -1432,7 +1435,7 @@ play_sound()
 			out.push_back(o);
 		else if (mode == "mix" || mode == "quad")
 			out.push_back(static_cast<int16_t>(
-				std::clamp<int64_t>(m + ((static_cast<int64_t>(o) * mix_gain) >> 15), -0x8000, 0x7FFF)));
+				std::clamp<int64_t>(m + ((static_cast<int64_t>(o) * gain) >> 15), -0x8000, 0x7FFF)));
 		else
 			out.push_back(m);
 	}
@@ -1486,6 +1489,9 @@ void
 audio_thread_state(bool) {}
 
 } /* namespace */
+
+/* The game's saves folder (defined below) */
+SaveFolder game_saves();
 
 /* GLEW's loader (shim/GL/osmesa.h): the frontend's functions */
 extern "C" OSMESAproc
@@ -1704,8 +1710,8 @@ retro_load_game(const retro_game_info *info)
 	if (sound_game(core->game->name) &&
 	    !environ_cb(RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_MULTI, &audio_multi))
 		audio_multi = {};
-	log(RETRO_LOG_INFO, "sound: multi-channel %s\n", audio_multi.batch_int16 ? "taken (Quad has four channels)" :
-	                                                                         "not offered (Quad is Both at 0 dB)");
+	log(RETRO_LOG_INFO, "sound: multi-channel %s\n", audio_multi.batch_int16 ? "taken (4.0 has four channels)" :
+	                                                                         "not offered (4.0 is Both)");
 	{
 		const char *v = option_value("odin_audio_thread");
 		const retro_audio_callback callback{ audio_thread_callback, audio_thread_state };
@@ -1722,12 +1728,7 @@ retro_load_game(const retro_game_info *info)
 		core->set_rumble = rumble.set_rumble_state;
 	core->board->set_screen(&core->screen);
 	core->board->set_panel(&core->panel);
-	/* saves/odin/<game>; saves/Odin/<game> where the frontend already keeps
-	 * each core's saves in a folder of the core's name */
-	const fs::path saves = fs::path(core->save_dir);
-	std::string folder = saves.filename().string();
-	std::transform(folder.begin(), folder.end(), folder.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-	core->board->keep_in(SaveFolder(((folder == "odin" ? saves : saves / "odin") / name).string()));
+	core->board->keep_in(game_saves());
 	core->board->reset();
 	/* Taken when the content starts (Restart) */
 	const char *threaded = option_value("odin_threaded");
@@ -1762,6 +1763,17 @@ retro_unload_game(void)
 		vk_card->fn().vkDeviceWaitIdle(vk_card->device());
 	core->screen.renderer.reset();
 	core.reset();
+}
+
+/* saves/odin/<game>; saves/Odin/<game> where the frontend already keeps
+ * each core's saves in a folder of the core's name */
+SaveFolder
+game_saves()
+{
+	const fs::path saves = fs::path(core->save_dir);
+	std::string folder = saves.filename().string();
+	std::transform(folder.begin(), folder.end(), folder.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+	return SaveFolder(((folder == "odin" ? saves : saves / "odin") / core->game->name).string());
 }
 
 /* The board at rest between two frames: its thread, if it has one, done
@@ -1861,11 +1873,28 @@ retro_run(void)
 RETRO_API void
 retro_reset(void)
 {
-	if (core && core->board) {
-		board_at_rest();
-		core->board->reset();
-		core->frame_pending = false;
+	/* As the desktop's Reset (Ended::RESTART, a new run_game): a new board,
+	 * not the old one's reset, which left the I/O board unseen (I/O BD IS
+	 * NOT CONNECTED TO GAME BD in Planet Harriers, NNshi) */
+	if (!core || !core->board)
+		return;
+	core->board_thread.stop();
+	core->board->power_off();
+	core->frame_pending = false;
+	std::unique_ptr<Hikaru> board = Hikaru::make(*core->game, false);
+	if (!board) {
+		log(RETRO_LOG_ERROR, "reset: the board could not be made again\n");
+		return;
 	}
+	core->board = std::move(board);
+	core->panel.set_game(*core->game);
+	core->board->set_screen(&core->screen);
+	core->board->set_panel(&core->panel);
+	core->board->keep_in(game_saves());
+	core->board->reset();
+	if (core->threaded)
+		core->board_thread.start(*core->board);
+	log(RETRO_LOG_INFO, "reset: the board made again\n");
 }
 
 /* Save states. The board writes and reads them as files (StateFile,
