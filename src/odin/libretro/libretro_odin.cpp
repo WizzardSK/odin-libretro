@@ -23,6 +23,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
@@ -835,7 +836,7 @@ vk_create_device(retro_vulkan_context *context, VkInstance instance, VkPhysicalD
 	return true;
 }
 
-/* Before the frontend destroys the device: Odin's card goes */
+/* Odin's card goes, before the frontend destroys the device (context_destroy) */
 void
 vk_destroy_device()
 {
@@ -847,15 +848,28 @@ vk_destroy_device()
 	vk_iface = nullptr;
 }
 
-const retro_hw_render_context_negotiation_interface_vulkan vk_negotiation = {
-	RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN,
-	RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN_VERSION,
-	vk_application_info,
-	vk_create_device,
-	vk_destroy_device,
-	vk_create_instance,
-	vk_create_device2,
-};
+/* The negotiation interface, on the heap and never freed: RetroArch keeps
+ * the pointer and reads it again when it tears its Vulkan context down,
+ * after it has unloaded the core, whose own memory is gone by then. No
+ * destroy_device either, which it would call there: Odin's card goes in
+ * context_destroy, before the frontend destroys the device. */
+retro_hw_render_context_negotiation_interface_vulkan *
+vk_negotiation()
+{
+	static retro_hw_render_context_negotiation_interface_vulkan *const iface = [] {
+		auto *made = static_cast<retro_hw_render_context_negotiation_interface_vulkan *>(
+			std::calloc(1, sizeof(retro_hw_render_context_negotiation_interface_vulkan)));
+		made->interface_type = RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN;
+		made->interface_version = RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN_VERSION;
+		made->get_application_info = vk_application_info;
+		made->create_device = vk_create_device;
+		made->destroy_device = nullptr;
+		made->create_instance = vk_create_instance;
+		made->create_device2 = vk_create_device2;
+		return made;
+	}();
+	return iface;
+}
 
 /* The picture of the frame (the renderer's image, vk::Context::picture)
  * copied into the image of the frontend's sync index, which the frontend
@@ -1148,8 +1162,7 @@ retro_load_game(const retro_game_info *info)
 		if (!environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &hw_render))
 			return false;
 		if (vulkan)
-			environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE,
-			           const_cast<retro_hw_render_context_negotiation_interface_vulkan *>(&vk_negotiation));
+			environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE, vk_negotiation());
 		api = vulkan ? Api::VULKAN : Api::OPENGL;
 		return true;
 	};
