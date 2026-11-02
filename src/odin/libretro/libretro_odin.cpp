@@ -308,8 +308,51 @@ private:
  *  player 1; UP/DOWN/LEFT/RIGHT the D-pad; BUTTON1 to BUTTON8 B, A, Y, X,
  *  L, R, L2, R2; STICK the left stick (and the D-pad), STICK2 the right one;
  *  GEAR_UP/GEAR_DOWN and a gear lever R and L; STEER the left stick across,
- *  ACCEL R2, BRAKE L2; GUN_X/GUN_Y the light gun, GUN_OFFSCREEN its reload.
+ *  ACCEL R2, BRAKE L2; GUN_X/GUN_Y the left stick, as the desktop gives a
+ *  sight to a gamepad, or the light gun on a port whose device is Light Gun
+ *  (GUN_OFFSCREEN its reload). A control the list gives inputs of the
+ *  gamepad ("pad": "righttrigger"...) takes those in place of its role's.
  */
+/* The device of each port (retro_set_controller_port_device): RetroPad or
+ * Light Gun */
+unsigned port_device[2] = { RETRO_DEVICE_JOYPAD, RETRO_DEVICE_JOYPAD };
+
+bool
+light_gun(unsigned port)
+{
+	return port < 2 && port_device[port] == RETRO_DEVICE_LIGHTGUN;
+}
+
+/* An input of the gamepad as SDL names it, as the list's "pad" does, on the
+ * RetroPad (SDL's a is the bottom button, the RetroPad's B); -1 for an axis
+ * or a name it has no button for */
+int
+retropad_of(const std::string &name)
+{
+	static const std::pair<const char *, int> NAMES[] = {
+		{ "a", RETRO_DEVICE_ID_JOYPAD_B },
+		{ "b", RETRO_DEVICE_ID_JOYPAD_A },
+		{ "x", RETRO_DEVICE_ID_JOYPAD_Y },
+		{ "y", RETRO_DEVICE_ID_JOYPAD_X },
+		{ "leftshoulder", RETRO_DEVICE_ID_JOYPAD_L },
+		{ "rightshoulder", RETRO_DEVICE_ID_JOYPAD_R },
+		{ "lefttrigger", RETRO_DEVICE_ID_JOYPAD_L2 },
+		{ "righttrigger", RETRO_DEVICE_ID_JOYPAD_R2 },
+		{ "leftstick", RETRO_DEVICE_ID_JOYPAD_L3 },
+		{ "rightstick", RETRO_DEVICE_ID_JOYPAD_R3 },
+		{ "start", RETRO_DEVICE_ID_JOYPAD_START },
+		{ "back", RETRO_DEVICE_ID_JOYPAD_SELECT },
+		{ "dpup", RETRO_DEVICE_ID_JOYPAD_UP },
+		{ "dpdown", RETRO_DEVICE_ID_JOYPAD_DOWN },
+		{ "dpleft", RETRO_DEVICE_ID_JOYPAD_LEFT },
+		{ "dpright", RETRO_DEVICE_ID_JOYPAD_RIGHT },
+	};
+	for (const auto &[n, id] : NAMES)
+		if (name == n)
+			return id;
+	return -1;
+}
+
 class LibretroPanel : public HikaruPanel {
 public:
 	void set_game(const Game &game)
@@ -352,6 +395,12 @@ public:
 				add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_R, name + " up");
 				continue;
 			}
+			if (control.type == GameControl::Type::BUTTON && has_pad(control)) {
+				for (const std::string &input : control.pad)
+					if (retropad_of(input) >= 0)
+						add(port, J, 0, static_cast<unsigned>(retropad_of(input)), name);
+				continue;
+			}
 			switch (control.role) {
 			case Role::START: add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_START, name); break;
 			case Role::SERVICE: add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_L3, name); break;
@@ -379,6 +428,14 @@ public:
 			case Role::STICK_Y: add(port, A, L, RETRO_DEVICE_ID_ANALOG_Y, name); break;
 			case Role::STICK2_X: add(port, A, R, RETRO_DEVICE_ID_ANALOG_X, name); break;
 			case Role::STICK2_Y: add(port, A, R, RETRO_DEVICE_ID_ANALOG_Y, name); break;
+			case Role::GUN_X:
+				if (!light_gun(port))
+					add(port, A, L, RETRO_DEVICE_ID_ANALOG_X, name);
+				break;
+			case Role::GUN_Y:
+				if (!light_gun(port))
+					add(port, A, L, RETRO_DEVICE_ID_ANALOG_Y, name);
+				break;
 			default: break;
 			}
 		}
@@ -426,7 +483,7 @@ public:
 
 			switch (control.type) {
 			case GameControl::Type::BUTTON:
-				if (switch_on(control.role, player))
+				if (has_pad(control) ? pad_pressed(control, player) : switch_on(control.role, player))
 					inputs.jvs_player[control.button.player & 1] |= control.button.mask;
 				break;
 			case GameControl::Type::POSITIONS: {
@@ -497,6 +554,21 @@ private:
 		return panel;
 	}
 
+	/* The list gives the control inputs of the gamepad that the RetroPad has */
+	static bool has_pad(const GameControl &control)
+	{
+		for (const std::string &input : control.pad)
+			if (retropad_of(input) >= 0)
+				return true;
+		return false;
+	}
+	static bool pad_pressed(const GameControl &control, unsigned player)
+	{
+		for (const std::string &input : control.pad)
+			if (retropad_of(input) >= 0 && pad(player, static_cast<unsigned>(retropad_of(input))))
+				return true;
+		return false;
+	}
 	static bool pad(unsigned player, unsigned id)
 	{
 		return input_state_cb && input_state_cb(player, RETRO_DEVICE_JOYPAD, 0, id) != 0;
@@ -550,7 +622,7 @@ private:
 		case Role::GEAR_UP: return pad(player, RETRO_DEVICE_ID_JOYPAD_R);
 		case Role::GEAR_DOWN: return pad(player, RETRO_DEVICE_ID_JOYPAD_L);
 		case Role::GUN_OFFSCREEN:
-			return input_state_cb &&
+			return light_gun(player) && input_state_cb &&
 			       (input_state_cb(player, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_RELOAD) ||
 			        input_state_cb(player, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_IS_OFFSCREEN));
 		default: return false;
@@ -586,6 +658,13 @@ private:
 		case Role::BRAKE: return channel(control.low, trigger(player, RETRO_DEVICE_ID_JOYPAD_L2), true);
 		case Role::GUN_X:
 		case Role::GUN_Y: {
+			/* A RetroPad: the left stick, the sight as far across the
+			 * picture as the stick is pushed, as the desktop's "leftx" */
+			if (!light_gun(player))
+				return channel(control.low,
+				               axis(player, L, control.role == Role::GUN_X ? RETRO_DEVICE_ID_ANALOG_X :
+				                                                            RETRO_DEVICE_ID_ANALOG_Y),
+				               false);
 			/* The light gun's place on the picture, -0x7FFF to 0x7FFF on
 			 * each side, as the desktop's mouse at 0 to 1 */
 			const int at = input_state_cb ? input_state_cb(player, RETRO_DEVICE_LIGHTGUN, 0,
@@ -625,9 +704,10 @@ struct Core {
 	std::string system_dir, save_dir;
 	bool context_ready = false;
 	std::vector<int16_t> mixed;
-	/* Sound Mode and Optional Board Level (empty: Automatic) */
-	std::string sound_mode = "auto";
-	std::optional<double> option_level;
+	/* Sound Mode and Optional Board Level of the game, for the three with an
+	 * optional sound board (sound_game) */
+	std::string sound_mode = "main";
+	double option_level = 0;
 	/* Audio Thread: the frames' sound buffered for the frontend's audio
 	 * thread (audio_thread_callback) */
 	bool audio_thread = false;
@@ -678,15 +758,30 @@ retro_core_option_definition option_defs[] = {
 	  "The pads shake as the cabinet does: its rumble outputs, the vibration device the optional sound board drives (Star Wars Racer Arcade) and the shocks of the steering wheel (NASCAR Arcade), as the desktop Odin shakes a gamepad.",
 	  { { "enabled", "Enabled" }, { "disabled", "Disabled" }, { nullptr, nullptr } },
 	  "enabled" },
-	{ "odin_sound_mode", "Sound Mode",
-	  "For the games with an optional sound board (Planet Harriers, Star Wars Racer Arcade, NASCAR Arcade): the main board, the optional one, or both mixed, at Optional Board Level. Automatic: both where the cabinet has speakers for the optional board, else the main one, as the desktop Odin. The desktop's Quad (four channels) has no place in RetroArch's stereo.",
-	  { { "auto", "Automatic" }, { "main", "Main" }, { "option", "Optional" }, { "mix", "Both" }, { nullptr, nullptr } },
-	  "auto" },
-	{ "odin_option_level", "Optional Board Level",
-	  "The optional board against the main one when Sound Mode mixes both: Automatic, the level of the game list (measured in a race), or -12 dB to +12 dB.",
-	  { { "auto", "Automatic" }, { "-12", "-12 dB" }, { "-9", "-9 dB" }, { "-6", "-6 dB" }, { "-3", "-3 dB" }, { "0", "0 dB" },
-	    { "3", "+3 dB" }, { "6", "+6 dB" }, { "9", "+9 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
-	  "auto" },
+	{ "odin_pharrier_sound_mode", "Sound Mode",
+	  "Planet Harriers has an optional sound board: Main, the main board alone; Both, the two mixed, the optional one at Optional Board Level; Optional Only, the optional board alone. The desktop's Quad gives each board two speakers of its own, which RetroArch's stereo has not.",
+	  { { "main", "Main" }, { "mix", "Both" }, { "option", "Optional Only" }, { nullptr, nullptr } },
+	  "mix" },
+	{ "odin_pharrier_option_level", "Optional Board Level",
+	  "The optional sound board of Planet Harriers against the main one, with Sound Mode Both.",
+	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
+	  "0" },
+	{ "odin_swracer_sound_mode", "Sound Mode",
+	  "Star Wars Racer Arcade has an optional sound board: Main, the main board alone; Both, the two mixed, the optional one at Optional Board Level; Optional Only, the optional board alone. The desktop's Quad gives each board two speakers of its own, which RetroArch's stereo has not.",
+	  { { "main", "Main" }, { "mix", "Both" }, { "option", "Optional Only" }, { nullptr, nullptr } },
+	  "mix" },
+	{ "odin_swracer_option_level", "Optional Board Level",
+	  "The optional sound board of Star Wars Racer Arcade against the main one, with Sound Mode Both.",
+	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
+	  "0" },
+	{ "odin_sgnascar_sound_mode", "Sound Mode",
+	  "NASCAR Arcade has an optional sound board: Main, the main board alone; Both, the two mixed, the optional one at Optional Board Level; Optional Only, the optional board alone. The desktop's Quad gives each board two speakers of its own, which RetroArch's stereo has not.",
+	  { { "main", "Main" }, { "mix", "Both" }, { "option", "Optional Only" }, { nullptr, nullptr } },
+	  "main" },
+	{ "odin_sgnascar_option_level", "Optional Board Level",
+	  "The optional sound board of NASCAR Arcade against the main one, with Sound Mode Both.",
+	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
+	  "-12" },
 	{ "odin_anisotropy", "Anisotropic Filtering",
 	  "Of the texture filter; Off as on the board.",
 	  { { "1", "Off" }, { "2", "2x" }, { "4", "4x" }, { "8", "8x" }, { "16", "16x" }, { nullptr, nullptr } },
@@ -697,6 +792,35 @@ retro_core_option_definition option_defs[] = {
 	  "disabled" },
 	{ nullptr, nullptr, nullptr, { { nullptr, nullptr } }, nullptr },
 };
+
+/* The games with an optional sound board, whose Sound Mode and Optional
+ * Board Level the options have; NASCAR Arcade (original) takes those of
+ * NASCAR Arcade */
+const char *const SOUND_GAMES[] = { "pharrier", "swracer", "sgnascar" };
+
+const char *
+sound_game(const std::string &name)
+{
+	for (const char *g : SOUND_GAMES)
+		if (name.rfind(g, 0) == 0)
+			return g;
+	return nullptr;
+}
+
+/* The options of the game's sound shown, those of the others hidden (none
+ * shown without a game) */
+void
+show_sound_options(const char *shown)
+{
+	for (const char *g : SOUND_GAMES)
+		for (const char *what : { "_sound_mode", "_option_level" }) {
+			const std::string key = std::string("odin_") + g + what;
+			retro_core_option_display display{ key.c_str(), shown && !std::strcmp(shown, g) };
+
+			if (environ_cb)
+				environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &display);
+		}
+}
 
 const char *
 option_value(const char *key)
@@ -713,10 +837,16 @@ read_options(Core &c)
 		c.scale = std::clamp<unsigned>(static_cast<unsigned>(std::atoi(v)), 1, MOST_SCALE);
 	if (const char *v = option_value("odin_anisotropy"))
 		c.anisotropy = std::clamp<unsigned>(static_cast<unsigned>(std::atoi(v)), 1, 16);
-	if (const char *v = option_value("odin_sound_mode"))
-		c.sound_mode = v;
-	if (const char *v = option_value("odin_option_level"))
-		c.option_level = std::strcmp(v, "auto") ? std::optional<double>(std::atof(v)) : std::nullopt;
+	c.sound_mode = "main";
+	c.option_level = 0;
+	if (const char *g = c.game ? sound_game(c.game->name) : nullptr) {
+		const std::string prefix = std::string("odin_") + g;
+
+		if (const char *v = option_value((prefix + "_sound_mode").c_str()))
+			c.sound_mode = v;
+		if (const char *v = option_value((prefix + "_option_level").c_str()))
+			c.option_level = std::atof(v);
+	}
 	if (const char *v = option_value("odin_rumble"))
 		c.rumble = std::strcmp(v, "disabled") != 0;
 	if (const char *v = option_value("odin_upscale_mode"))
@@ -1238,21 +1368,16 @@ constexpr size_t AUDIO_MOST = 44100;
 
 /* The sound of the frame, as the desktop's AudioOut::interleave makes it:
  * the main board, the optional one, or both mixed with the optional board at
- * its level (Sound Mode, Optional Board Level; Automatic: both where the
- * cabinet has speakers for it, at the level of the list); 44 100 pairs a
- * second */
+ * its level (the game's Sound Mode and Optional Board Level; the main board
+ * in a game without those); 44 100 pairs a second */
 void
 play_sound()
 {
 	const std::vector<int16_t> &main = core->board->sound(false);
 	const std::vector<int16_t> &option = core->board->sound(true);
-	const Game &game = *core->game;
 	std::vector<int16_t> &out = core->mixed;
-	std::string mode = core->sound_mode;
-
-	if (mode == "auto")
-		mode = game.option_speakers ? "mix" : "main";
-	const double level = core->option_level.value_or(game.option_level);
+	const std::string &mode = core->sound_mode;
+	const double level = core->option_level;
 	const int32_t gain = static_cast<int32_t>(std::lround(32768 * std::pow(10.0, level / 20.0)));
 	const auto at = [](const std::vector<int16_t> &v, size_t i) { return i < v.size() ? v[i] : int16_t{ 0 }; };
 
@@ -1336,6 +1461,19 @@ retro_set_environment(retro_environment_t cb)
 	bool no_game = false;
 	cb(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &no_game);
 	cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS, option_defs);
+	show_sound_options(nullptr);
+
+	/* RetroPad, or Light Gun for a sight on the light gun */
+	static const retro_controller_description DEVICES[] = {
+		{ "RetroPad", RETRO_DEVICE_JOYPAD },
+		{ "Light Gun", RETRO_DEVICE_LIGHTGUN },
+	};
+	static const retro_controller_info PORTS[] = {
+		{ DEVICES, 2 },
+		{ DEVICES, 2 },
+		{ nullptr, 0 },
+	};
+	cb(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, const_cast<retro_controller_info *>(PORTS));
 }
 
 RETRO_API void retro_set_video_refresh(retro_video_refresh_t cb) { video_cb = cb; }
@@ -1384,7 +1522,14 @@ retro_deinit(void)
 	core.reset();
 }
 
-RETRO_API void retro_set_controller_port_device(unsigned, unsigned) {}
+RETRO_API void
+retro_set_controller_port_device(unsigned port, unsigned device)
+{
+	if (port < 2)
+		port_device[port] = device;
+	if (core && core->game)
+		core->panel.describe();
+}
 
 RETRO_API bool
 retro_load_game(const retro_game_info *info)
@@ -1438,6 +1583,7 @@ retro_load_game(const retro_game_info *info)
 	}
 
 	read_options(*core);
+	show_sound_options(sound_game(core->game->name));
 
 	retro_pixel_format format = RETRO_PIXEL_FORMAT_XRGB8888;
 	environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format);
@@ -1541,6 +1687,7 @@ retro_unload_game(void)
 	if (!core)
 		return;
 	log(RETRO_LOG_INFO, "content unloaded\n");
+	show_sound_options(nullptr);
 	for (unsigned player = 0; player < 2; player++)
 		if (core->set_rumble && core->rumbling[player]) {
 			core->set_rumble(player, RETRO_RUMBLE_STRONG, 0);

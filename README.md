@@ -41,7 +41,9 @@ The controls of each game come from its list (`odin-games.json`), by their roles
 | Steering | left stick |
 | Accelerator, brake | R2, L2 (analog) |
 | Gear up, gear down, gear lever | R, L |
-| Light gun | RetroArch's light gun, reload off-screen |
+| Sight (Brave Firefighters' hose) | left stick; with the port's device set to Light Gun (Controls > Port N Controls > Device Type), RetroArch's light gun, reload off-screen |
+
+A control the game list gives inputs of the gamepad takes those, as the desktop Odin does: Brave Firefighters' Water on R2 and Fog on L2.
 
 ## Core options
 
@@ -50,8 +52,7 @@ The controls of each game come from its list (`odin-games.json`), by their roles
 - **HUD at Higher Resolutions**: Snap (default), Native or Raw.
 - **Threaded Board** (Restart): Enabled (default), the board runs the next frame on a thread of its own while the frame before is drawn, as the desktop Odin does; faster, one frame more of latency. Disabled: each frame run and drawn in turn.
 - **Rumble**: Enabled (default), the pads shake as the cabinet does: its rumble outputs, the vibration device the optional sound board drives (Star Wars Racer Arcade) and the jolts of the steering wheel (NASCAR Arcade).
-- **Sound Mode**: for the games with an optional sound board (Planet Harriers, Star Wars Racer Arcade, NASCAR Arcade): Automatic (default: both mixed where the cabinet has speakers for the optional board, else the main board, as the desktop Odin), Main, Optional or Both. The desktop's Quad (four channels) has no place in RetroArch's stereo.
-- **Optional Board Level**: Automatic (the game list's level) or -12 dB to +12 dB, the optional board in the mix.
+- **Sound Mode** and **Optional Board Level**: shown only for the three games with an optional sound board, each with its own: Main, Both (the optional board mixed in at Optional Board Level, -12 dB to +12 dB) or Optional Only. Defaults: Planet Harriers and Star Wars Racer Arcade Both at 0 dB, NASCAR Arcade Main at -12 dB. The desktop's Quad (each board on two speakers of its own) has no place in RetroArch's stereo.
 - **Anisotropic Filtering**: Off (default) to 16x.
 
 - **Audio Thread** (Restart): Disabled (default) or Enabled, the sound handed to RetroArch's audio thread, which plays what is buffered while a frame takes long.
