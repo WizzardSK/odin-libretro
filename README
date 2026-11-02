@@ -8,20 +8,6 @@
 Odin (ᚨ), Copyright (C) 2026 Réda Chérif-Touil
 Released under the GNU GPL, version 3 or later (see LICENSE).
 
-THIS FORK: THE LIBRETRO CORE
-============================
-
-This fork (branch libretro) builds Odin as a libretro core for RetroArch,
-odin_libretro: the board and its OpenGL renderer, without the program's
-window and menu. How to build it, install it and play is in
-README.libretro.md. The cores for Linux (x86_64, aarch64) and Windows
-(x86_64) are in the releases:
-
- https://github.com/WizzardSK/odin-libretro/releases
-
-Testers talk on the libretro Discord, thread odin-libretro in
-#support-forum. The rest of this file is Odin's own.
-
 Odin is a low-level emulator of the SEGA Hikaru arcade board, for Linux,
 Windows and macOS. It runs the programs of the real chips wherever they
 are known, and draws with OpenGL or Vulkan.
