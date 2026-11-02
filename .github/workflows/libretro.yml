@@ -21,6 +21,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: false
+          fetch-depth: 0
       - name: Submodules (GLEW, jansson and the Vulkan headers)
         run: git submodule update --init --depth 1 3rdparty/glew 3rdparty/jansson 3rdparty/Vulkan-Headers
       # glibc 2.35, for the frontends that run on older distributions; GCC 13
@@ -34,8 +35,7 @@ jobs:
         run: |
           cmake -B build -G Ninja -DODIN_LIBRETRO=ON -DODIN_NATIVE=OFF \
             -DCMAKE_C_COMPILER=gcc-13 -DCMAKE_CXX_COMPILER=g++-13 \
-            -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \
-            -DODIN_VERSION="$(git rev-parse --short HEAD)"
+            -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
           cmake --build build -j$(nproc)
       - name: Check
         run: |
@@ -58,6 +58,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: false
+          fetch-depth: 0
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
@@ -73,8 +74,7 @@ jobs:
       - name: Build
         run: |
           cmake -B build -G Ninja -DODIN_LIBRETRO=ON -DODIN_NATIVE=OFF \
-            -DCMAKE_C_FLAGS=-march=x86-64-v2 -DCMAKE_CXX_FLAGS=-march=x86-64-v2 \
-            -DODIN_VERSION="$(git rev-parse --short HEAD)"
+            -DCMAKE_C_FLAGS=-march=x86-64-v2 -DCMAKE_CXX_FLAGS=-march=x86-64-v2
           cmake --build build
       - name: Check
         run: |
