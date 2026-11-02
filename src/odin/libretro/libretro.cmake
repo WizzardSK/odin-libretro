@@ -94,7 +94,8 @@ add_custom_command(OUTPUT ${out}
 list(APPEND SPIRV ${out})
 
 
-# The shaders' texts and the game list, in the binary
+# The shaders' texts, the game list and the lists of mesh programs, in the binary
+file(GLOB LR_SHADER_LISTS CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/shaders/*.txt)
 set(LR_GFX ${CMAKE_SOURCE_DIR}/src/odin/host/gfx)
 file(GLOB LR_GLSL_FILES CONFIGURE_DEPENDS ${LR_GFX}/glsl/*)
 list(FILTER LR_GLSL_FILES EXCLUDE REGEX "\\.spv$")
@@ -104,7 +105,7 @@ set_source_files_properties(${LR_GFX}/spirv.S PROPERTIES
 set_source_files_properties(${LR_GFX}/glsl_texts.S PROPERTIES
 	COMPILE_OPTIONS "-Wa,-I,${LR_GFX}" OBJECT_DEPENDS "${LR_GLSL_FILES}")
 set_source_files_properties(${CMAKE_SOURCE_DIR}/src/odin/libretro/games_json.S PROPERTIES
-	COMPILE_OPTIONS "-Wa,-I,${CMAKE_SOURCE_DIR}" OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/odin-games.json")
+	COMPILE_OPTIONS "-Wa,-I,${CMAKE_SOURCE_DIR}" OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/odin-games.json;${LR_SHADER_LISTS}")
 
 add_library(odin_libretro SHARED ${LR_SOURCES} ${LR_EMBEDDED} $<TARGET_OBJECTS:odin_lr_archive>)
 set_target_properties(odin_libretro PROPERTIES PREFIX "" OUTPUT_NAME odin_libretro

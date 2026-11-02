@@ -55,6 +55,8 @@
 #include "odin/machine/cabinet/drive_board.hpp"
 
 extern "C" const char odin_games_json[];
+extern "C" const char odin_shaders_airtrix[], odin_shaders_braveff[], odin_shaders_pharrier[], odin_shaders_sgnascar[],
+	odin_shaders_swracer[], odin_shaders_von4[];
 
 namespace fs = std::filesystem;
 using namespace odin;
@@ -728,6 +730,53 @@ load_game_list(Core &c)
 	return c.games.load(path.string());
 }
 
+/* A file written with that text, unless it holds it already */
+void
+write_if_changed(const fs::path &path, const std::string &text)
+{
+	std::error_code ec;
+
+	fs::create_directories(path.parent_path(), ec);
+	std::ifstream in(path, std::ios::binary);
+	const std::string old((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+	in.close();
+	if (old != text) {
+		std::ofstream out(path, std::ios::binary | std::ios::trunc);
+		out << text;
+	}
+}
+
+/* The mesh programs of the game, as the desktop's find_program_lists lays
+ * them out: the list Odin comes with (system/odin/shaders/<game>.txt), the
+ * one kept for the player, which the renderer adds to as the game draws
+ * (system/odin/cache/shaders/<game>.txt), and the folder of the programs
+ * the driver made (system/odin/cache/programs) */
+void
+program_lists(const std::string &game, Renderer::Options &looks)
+{
+	static const struct {
+		const char *game;
+		const char *text;
+	} seeds[] = { { "airtrix", odin_shaders_airtrix },   { "braveff", odin_shaders_braveff },
+		      { "pharrier", odin_shaders_pharrier }, { "sgnascar", odin_shaders_sgnascar },
+		      { "swracer", odin_shaders_swracer },   { "von4", odin_shaders_von4 } };
+	const fs::path odin = fs::path(core->system_dir) / "odin";
+	std::error_code ec;
+	/* A version of a game (airtrixo) draws as its parent does */
+	const std::string parent = core->game->parent.empty() ? game : core->game->parent;
+
+	for (const auto &seed : seeds)
+		if (parent == seed.game || game == seed.game) {
+			const fs::path path = odin / "shaders" / (std::string(seed.game) + ".txt");
+			write_if_changed(path, seed.text);
+			looks.programs_seed = path.string();
+		}
+	fs::create_directories(odin / "cache" / "shaders", ec);
+	fs::create_directories(odin / "cache" / "programs", ec);
+	looks.programs_kept = (odin / "cache" / "shaders" / (game + ".txt")).string();
+	looks.programs_made = (odin / "cache" / "programs").string();
+}
+
 void
 create_renderer()
 {
@@ -753,8 +802,20 @@ create_renderer()
 	memory.fb_writes = &core->board->framebuffer_writes();
 	memory.texram[0] = core->board->texture_ram(0);
 	memory.texram[1] = core->board->texture_ram(1);
+	program_lists(core->game->name, looks);
 	core->screen.renderer = std::make_unique<Renderer>(core->graphics, memory, looks);
 	core->screen.renderer->set_gpu(&core->board->gpu());
+	/* The programs of the lists made ready before the first frame, as the
+	 * desktop does behind its loading screen, so that the game does not
+	 * stutter when it first draws with one */
+	unsigned prepared = 0;
+	core->screen.renderer->prepare_programs([&](unsigned done, unsigned total) {
+		if (done == 0)
+			log(RETRO_LOG_INFO, "programs: making %u ready\n", total);
+		prepared = total;
+	});
+	if (prepared)
+		log(RETRO_LOG_INFO, "programs: %u ready\n", prepared);
 }
 
 void vk_destroy_outputs();

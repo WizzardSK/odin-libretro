@@ -21,6 +21,7 @@ The core is `build/odin_libretro.so` (`.dll` on Windows); `odin_libretro.info` g
 - Load a game's MAME set as content: `airtrix`, `airtrixo`, `braveff`, `pharrier`, `sgnascar`, `sgnascaro`, `swracer` or `von4` (`.zip`, `.7z` or a folder).
 - The shared sets `hikaru` and `mie` (and the optional `jvs13551`, `18wheelr`, `srally2`) go beside the game or in `system/odin`. A missing file is named in RetroArch's log with the set it belongs to.
 - RetroArch's video driver has to be `vulkan` (Vulkan 1.3, or 1.1 with dynamic rendering, synchronization2 and the extended dynamic state) or `glcore` (OpenGL 4.3).
+- The mesh programs (shaders) of a game are made ready before its first frame from the list Odin comes with (`system/odin/shaders/<game>.txt`) and the one kept as the game draws (`system/odin/cache/shaders/<game>.txt`, with the driver's programs in `system/odin/cache/programs`), as the desktop Odin keeps them, so the game stutters less the next time.
 - What the board keeps without power (its EEPROMs, backup RAM, Virtual-On's card) goes to `saves/odin/<game>`.
 - Save states work; a state loads only into the build of the core that made it.
 
