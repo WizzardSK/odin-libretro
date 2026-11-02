@@ -72,13 +72,12 @@ enum class Api { OPENGL, VULKAN };
 Api api = Api::OPENGL;
 /* Vulkan: Odin's card on the device the core made through the frontend
  * (negotiation interface, vk_create_device2), the frontend's interface, and
- * an image and a semaphore for each of the frontend's sync indices that the
+ * an image for each of the frontend's sync indices that the
  * picture of a frame is copied into for it */
 std::unique_ptr<vk::Context> vk_card;
 const retro_hw_render_interface_vulkan *vk_iface;
 struct VkOutput {
 	vk::Image image;
-	VkSemaphore done = VK_NULL_HANDLE;
 };
 std::vector<VkOutput> vk_outputs;
 
@@ -719,8 +718,6 @@ vk_destroy_outputs()
 	vk_card->send_and_wait();
 	for (VkOutput &out : vk_outputs) {
 		vk_card->destroy_image(out.image);
-		if (out.done)
-			vk_card->fn().vkDestroySemaphore(vk_card->device(), out.done, nullptr);
 	}
 	vk_outputs.clear();
 }
@@ -845,7 +842,8 @@ const retro_hw_render_context_negotiation_interface_vulkan vk_negotiation = {
 
 /* The picture of the frame (the renderer's image, vk::Context::picture)
  * copied into the image of the frontend's sync index, which the frontend
- * samples once the copy's semaphore is signalled */
+ * samples after the copy (wait_sync_index: the frontend done with what that
+ * image held before) */
 constexpr VkComponentMapping OPAQUE = { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
 	                                VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_ONE };
 
@@ -870,10 +868,6 @@ present_vk(HostPicture picture)
 		out.image = vk_card->make_image(VK_FORMAT_R8G8B8A8_UNORM, picture.w, picture.h, 1,
 		                                VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, OPAQUE);
 	}
-	if (!out.done) {
-		const VkSemaphoreCreateInfo info{ VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, nullptr, 0 };
-		vk_card->check(vk_card->fn().vkCreateSemaphore(vk_card->device(), &info, nullptr, &out.done), "a semaphore");
-	}
 
 	const VkCommandBuffer cb = vk_card->commands();
 	const VkImageCopy region{ { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 }, { 0, 0, 0 }, { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
@@ -883,25 +877,11 @@ present_vk(HostPicture picture)
 	vk_card->barrier(cb, out.image, vk::COPIED_TO);
 	vk_card->fn().vkCmdCopyImage(cb, from->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, out.image.image,
 	                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-	/* TEMP probe: the sum of the picture's pixels at frame 600 */
-	static unsigned probe_frames = 0;
-	vk::Buffer *probe = nullptr;
-	if (++probe_frames == 600) {
-		probe = &vk_card->staging(VkDeviceSize{ picture.w } * picture.h * 4);
-		const VkBufferImageCopy copy{ 0, 0, 0, { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 }, { 0, 0, 0 }, { picture.w, picture.h, 1 } };
-		vk_card->fn().vkCmdCopyImageToBuffer(cb, out.image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, probe->buffer, 1, &copy);
-	}
 	vk_card->barrier(cb, out.image, vk::SAMPLED);
-	vk_card->end_frame({ VK_NULL_HANDLE, out.done });
-	if (probe) {
-		vk_card->send_and_wait();
-		uint64_t sum = 0;
-		for (size_t i = 0; i < size_t{ picture.w } * picture.h * 4; i++)
-			sum += probe->bytes[i];
-		log(RETRO_LOG_INFO, "TEMP probe: picture %ux%u, pixel sum %llu, first %02x%02x%02x%02x\n", picture.w, picture.h,
-		    static_cast<unsigned long long>(sum), probe->bytes[0], probe->bytes[1], probe->bytes[2], probe->bytes[3]);
-	}
-
+	/* Sent before the frontend's frame on the same queue, which the
+	 * barrier above orders the frontend's read of the image after, as the
+	 * vita3k core does: no semaphore, which RetroArch need not wait for */
+	vk_card->end_frame({});
 	retro_vulkan_image image{};
 	image.image_view = out.image.view;
 	image.image_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -911,7 +891,7 @@ present_vk(HostPicture picture)
 	image.create_info.format = VK_FORMAT_R8G8B8A8_UNORM;
 	image.create_info.components = OPAQUE;
 	image.create_info.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-	vk_iface->set_image(vk_iface->handle, &image, 1, &out.done, vk_card->queue_family());
+	vk_iface->set_image(vk_iface->handle, &image, 0, nullptr, VK_QUEUE_FAMILY_IGNORED);
 	video_cb(RETRO_HW_FRAME_BUFFER_VALID, picture.w, picture.h, 0);
 }
 
