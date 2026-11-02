@@ -2,6 +2,8 @@
 
 The libretro core of [Odin](https://github.com/Tovarichtch/Odin), the SEGA Hikaru emulator: the board and its OpenGL renderer as `odin_libretro`, without the program's window, menu and SDL.
 
+Downloads: the cores for Linux x86_64 and aarch64 and Windows x86_64, with `odin_libretro.info`, are in the [releases](https://github.com/WizzardSK/odin-libretro/releases). The Linux aarch64 core is tested in RetroArch (Planet Harriers at full speed with Threaded Board); the others are built but not tried yet. Reports go to the odin-libretro thread in #support-forum on the libretro Discord, or to this repository's issues.
+
 ## Building
 
 ```
