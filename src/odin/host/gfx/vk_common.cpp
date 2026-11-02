@@ -31,7 +31,9 @@
 #include <optional>
 
 #include <SDL3/SDL.h>
+#ifndef ODIN_LIBRETRO
 #include <SDL3/SDL_vulkan.h>
+#endif
 
 #include "odin/common/env.hpp"
 
@@ -130,6 +132,40 @@ result_name(VkResult result)
 
 } /* namespace */
 
+#ifdef ODIN_LIBRETRO
+std::unique_ptr<Context>
+Context::make_libretro(PFN_vkGetInstanceProcAddr gipa, VkInstance instance, VkPhysicalDevice gpu,
+                       VkSurfaceKHR surface,
+                       const std::function<VkDevice(VkPhysicalDevice, const VkDeviceCreateInfo &)> &create,
+                       std::string &why)
+{
+	std::unique_ptr<Context> card(new Context());
+
+	card->m_borrowed = true;
+	card->m_fn.vkGetInstanceProcAddr = gipa;
+#define ODIN_VK_LOAD(name) card->m_fn.name = reinterpret_cast<PFN_##name>(gipa(VK_NULL_HANDLE, #name));
+	ODIN_VK_GLOBAL(ODIN_VK_LOAD)
+#undef ODIN_VK_LOAD
+	card->m_instance = instance;
+#define ODIN_VK_LOAD(name) card->m_fn.name = reinterpret_cast<PFN_##name>(gipa(instance, #name));
+	ODIN_VK_INSTANCE(ODIN_VK_LOAD)
+#undef ODIN_VK_LOAD
+	/* The version the core asked the instance for (its application info) */
+	card->m_api_version = VK_API_VERSION_1_3;
+	card->m_surface = surface;
+	card->m_only_gpu = gpu;
+	card->m_create_device = create;
+	if (!card->choose_gpu("", why) || !card->make_device(why))
+		return nullptr;
+	return card;
+}
+
+std::vector<std::string>
+Context::gpus()
+{
+	return {};
+}
+#else
 std::unique_ptr<Context>
 Context::make(SDL_Window *window, const std::string &gpu, std::string &why)
 {
@@ -174,6 +210,8 @@ Context::gpus()
 	return out;
 }
 
+#endif
+
 std::vector<std::string>
 Context::names_of(const std::vector<VkPhysicalDevice> &gpus) const
 {
@@ -207,8 +245,11 @@ Context::~Context()
 		destroy_image(m_window);
 		for (const Block &block : m_blocks)
 			m_fn.vkFreeMemory(m_device, block.memory, nullptr);
-		m_fn.vkDestroyDevice(m_device, nullptr);
+		if (!m_borrowed)
+			m_fn.vkDestroyDevice(m_device, nullptr);
 	}
+	if (m_borrowed)
+		return;
 	if (m_surface)
 		m_fn.vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
 	if (m_messenger)
@@ -217,6 +258,7 @@ Context::~Context()
 		m_fn.vkDestroyInstance(m_instance, nullptr);
 }
 
+#ifndef ODIN_LIBRETRO
 /* SDL has loaded Vulkan with the window (SDL_WINDOW_VULKAN): its entry
  * gives the rest. */
 bool
@@ -282,6 +324,8 @@ Context::make_instance(std::string &why)
 	listen_to_validation();
 	return true;
 }
+
+#endif
 
 /* The validation layer, when asked for (it says what Odin does wrong) and
  * there: its name, and the extension of its messages added to those of
@@ -365,6 +409,9 @@ Context::choose_gpu(const std::string &wanted, std::string &why)
 		VkPhysicalDeviceProperties props;
 		uint32_t n = 0;
 
+		if (m_only_gpu && gpu != m_only_gpu)
+			continue;
+
 		m_fn.vkGetPhysicalDeviceProperties(gpu, &props);
 		const uint32_t api = std::min(props.apiVersion, instance_api);
 		if (api < VK_API_VERSION_1_1)
@@ -439,9 +486,10 @@ std::optional<uint32_t>
 Context::shown_family(VkPhysicalDevice gpu, const std::vector<VkQueueFamilyProperties> &families) const
 {
 	for (uint32_t f = 0; f < families.size(); f++) {
-		VkBool32 shows = VK_FALSE;
+		VkBool32 shows = m_surface ? VK_FALSE : VK_TRUE;
 
-		m_fn.vkGetPhysicalDeviceSurfaceSupportKHR(gpu, f, m_surface, &shows);
+		if (m_surface)
+			m_fn.vkGetPhysicalDeviceSurfaceSupportKHR(gpu, f, m_surface, &shows);
 		if ((families[f].queueFlags & VK_QUEUE_GRAPHICS_BIT) && shows)
 			return f;
 	}
@@ -454,7 +502,9 @@ Context::shown_family(VkPhysicalDevice gpu, const std::vector<VkQueueFamilyPrope
 void
 Context::list_extensions(const std::vector<VkExtensionProperties> &extensions, uint32_t api, bool core13, bool reset_ext)
 {
-	m_extensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+	m_extensions.clear();
+	if (!m_borrowed)
+		m_extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 	/* Dear ImGui asks for this one by name, even under 1.3 */
 	if (has(extensions, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME))
 		m_extensions.push_back(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
@@ -533,7 +583,13 @@ Context::make_device(std::string &why)
 
 	const VkDeviceCreateInfo info{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &wanted.all, 0, 1, &queue, 0, nullptr,
 	                               static_cast<uint32_t>(m_extensions.size()), m_extensions.data(), nullptr };
-	if (const VkResult result = m_fn.vkCreateDevice(m_gpu, &info, nullptr, &m_device); result != VK_SUCCESS) {
+	if (m_create_device) {
+		m_device = m_create_device(m_gpu, info);
+		if (!m_device) {
+			why = "the frontend made no Vulkan device";
+			return false;
+		}
+	} else if (const VkResult result = m_fn.vkCreateDevice(m_gpu, &info, nullptr, &m_device); result != VK_SUCCESS) {
 		why = std::string("no Vulkan device: ") + result_name(result);
 		return false;
 	}
@@ -663,7 +719,12 @@ Context::submit(Frame &frame, const Submit &submit)
 	if (frame.uploading)
 		check(m_fn.vkEndCommandBuffer(frame.uploads), "a command buffer");
 	check(m_fn.vkEndCommandBuffer(frame.cb), "a command buffer");
-	check(m_fn.vkQueueSubmit2(m_queue, 1, &info, frame.done), "sending commands");
+	if (m_lock_queue)
+		m_lock_queue();
+	const VkResult sent = m_fn.vkQueueSubmit2(m_queue, 1, &info, frame.done);
+	if (m_unlock_queue)
+		m_unlock_queue();
+	check(sent, "sending commands");
 	frame.written = frame.uploading = false;
 	frame.sent = true;
 	frame.number = ++m_sent;

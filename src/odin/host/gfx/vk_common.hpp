@@ -184,6 +184,23 @@ public:
 	 * ODIN_VK_VALIDATION=1, Vulkan's validation layer, its messages on
 	 * stderr. */
 	static std::unique_ptr<Context> make(SDL_Window *window, const std::string &gpu, std::string &why);
+#ifdef ODIN_LIBRETRO
+	/* The libretro core: the card on the frontend's instance, the device
+	 * made by `create` (the frontend's wrapper, which adds what the
+	 * frontend needs) on `gpu` (or the best one where it is null) with a
+	 * queue that draws and shows on `surface` (any that draws where it is
+	 * null). The frontend keeps the instance and the device, and shares
+	 * the queue: set_queue_lock gives its lock. */
+	static std::unique_ptr<Context> make_libretro(PFN_vkGetInstanceProcAddr gipa, VkInstance instance,
+	                                              VkPhysicalDevice gpu, VkSurfaceKHR surface,
+	                                              const std::function<VkDevice(VkPhysicalDevice, const VkDeviceCreateInfo &)> &create,
+	                                              std::string &why);
+	void set_queue_lock(std::function<void()> lock, std::function<void()> unlock)
+	{
+		m_lock_queue = std::move(lock);
+		m_unlock_queue = std::move(unlock);
+	}
+#endif
 	/* The cards of the computer, with or without a window */
 	static std::vector<std::string> gpus();
 	~Context();
@@ -377,6 +394,13 @@ private:
 	bool m_core13 = false;
 	/* The extensions the device was made with */
 	std::vector<const char *> m_extensions;
+	/* The libretro core's (make_libretro): the instance and the device the
+	 * frontend's, the card chosen by it, the device made by its wrapper,
+	 * the queue taken under its lock */
+	bool m_borrowed = false;
+	VkPhysicalDevice m_only_gpu = VK_NULL_HANDLE;
+	std::function<VkDevice(VkPhysicalDevice, const VkDeviceCreateInfo &)> m_create_device;
+	std::function<void()> m_lock_queue, m_unlock_queue;
 
 	struct Frame {
 		VkCommandPool pool = VK_NULL_HANDLE;

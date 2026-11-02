@@ -38,6 +38,8 @@
 
 #include "libretro.h"
 #include <GL/osmesa.h>
+#include "odin/host/gfx/vk_common.hpp"
+#include "libretro_vulkan.h"
 
 #include "odin/host/app/games.hpp"
 #include "odin/host/app/rom_files.hpp"
@@ -63,6 +65,22 @@ retro_input_poll_t input_poll_cb;
 retro_input_state_t input_state_cb;
 retro_log_printf_t log_cb;
 retro_hw_render_callback hw_render;
+
+/* What the core draws with: OpenGL, or Vulkan on the frontend's device
+ * (Renderer, a core option taken when the content starts) */
+enum class Api { OPENGL, VULKAN };
+Api api = Api::OPENGL;
+/* Vulkan: Odin's card on the device the core made through the frontend
+ * (negotiation interface, vk_create_device2), the frontend's interface, and
+ * an image and a semaphore for each of the frontend's sync indices that the
+ * picture of a frame is copied into for it */
+std::unique_ptr<vk::Context> vk_card;
+const retro_hw_render_interface_vulkan *vk_iface;
+struct VkOutput {
+	vk::Image image;
+	VkSemaphore done = VK_NULL_HANDLE;
+};
+std::vector<VkOutput> vk_outputs;
 
 void
 log(retro_log_level level, const char *fmt, ...)
@@ -96,8 +114,8 @@ message(const std::string &text, unsigned frames = 300)
 class LibretroGraphics : public HostGraphics {
 public:
 	const std::string &name() const override { return m_name; }
-	bool vulkan() const override { return false; }
-	const char *api() const override { return "OpenGL"; }
+	bool vulkan() const override { return ::api == Api::VULKAN; }
+	const char *api() const override { return ::api == Api::VULKAN ? "Vulkan" : "OpenGL"; }
 	void take_thread() override {}
 	void leave_thread() override {}
 	void clear_window(unsigned, unsigned) override {}
@@ -118,7 +136,10 @@ public:
 	uint64_t ui_image(HostImage) const override { return 0; }
 	void ui_blocks(ImDrawList *, bool) const override {}
 	void ui_levels(ImDrawList *, bool) const override {}
-	std::unique_ptr<Drawing> make_drawing() override { return Drawing::make_gl(); }
+	std::unique_ptr<Drawing> make_drawing() override
+	{
+		return ::api == Api::VULKAN ? Drawing::make_vk(*vk_card) : Drawing::make_gl();
+	}
 
 private:
 	std::string m_name = "libretro";
@@ -528,6 +549,10 @@ constexpr unsigned SPEED_FRAMES = 600;
 
 /* The options, as the desktop's [display] has them (OPTIONS) */
 retro_core_option_definition option_defs[] = {
+	{ "odin_renderer", "Renderer (Restart)",
+	  "OpenGL or Vulkan. Automatic takes the one of RetroArch's video driver (glcore or vulkan).",
+	  { { "auto", "Automatic" }, { "opengl", "OpenGL" }, { "vulkan", "Vulkan" }, { nullptr, nullptr } },
+	  "auto" },
 	{ "odin_scale", "Internal Resolution",
 	  "The 3D drawn that many times finer than the board's 640x480 screen; the 2D layers stay as they are.",
 	  { { "1", "1x (640x480)" }, { "2", "2x (1280x960)" }, { "3", "3x (1920x1440)" }, { "4", "4x (2560x1920)" },
@@ -626,9 +651,37 @@ create_renderer()
 	core->screen.renderer->set_gpu(&core->board->gpu());
 }
 
+void vk_destroy_outputs();
+
+void
+context_reset_vk()
+{
+	if (!environ_cb(RETRO_ENVIRONMENT_GET_HW_RENDER_INTERFACE, &vk_iface) || !vk_iface ||
+	    vk_iface->interface_type != RETRO_HW_RENDER_INTERFACE_VULKAN) {
+		log(RETRO_LOG_ERROR, "no Vulkan interface from the frontend\n");
+		vk_iface = nullptr;
+		return;
+	}
+	if (!vk_card) {
+		log(RETRO_LOG_ERROR, "the frontend did not let the core make its Vulkan device (negotiation interface 2)\n");
+		return;
+	}
+	vk_card->set_queue_lock([] { vk_iface->lock_queue(vk_iface->handle); },
+	                        [] { vk_iface->unlock_queue(vk_iface->handle); });
+	log(RETRO_LOG_INFO, "Vulkan on %s\n", vk_card->name().c_str());
+	if (!core)
+		return;
+	core->context_ready = true;
+	create_renderer();
+}
+
 void
 context_reset()
 {
+	if (api == Api::VULKAN) {
+		context_reset_vk();
+		return;
+	}
 	glewExperimental = GL_TRUE;
 	const GLenum err = glewInit();
 
@@ -651,6 +704,142 @@ context_destroy()
 		return;
 	core->screen.renderer.reset();
 	core->context_ready = false;
+	if (api == Api::VULKAN)
+		vk_destroy_outputs();
+}
+
+/* ─── Vulkan ───────────────────────────────────────────────────────────── */
+
+/* The images the pictures are copied into, gone with the context */
+void
+vk_destroy_outputs()
+{
+	if (!vk_card)
+		return;
+	vk_card->send_and_wait();
+	for (VkOutput &out : vk_outputs) {
+		vk_card->destroy_image(out.image);
+		if (out.done)
+			vk_card->fn().vkDestroySemaphore(vk_card->device(), out.done, nullptr);
+	}
+	vk_outputs.clear();
+}
+
+/* Negotiation interface 2: the instance at Vulkan 1.3 and a device with
+ * what Odin's renderer needs, both made through the frontend's wrappers,
+ * which add what the frontend needs */
+const VkApplicationInfo *
+vk_application_info()
+{
+	static const VkApplicationInfo app{ VK_STRUCTURE_TYPE_APPLICATION_INFO, nullptr, "Odin", 1, "Odin", 1,
+		                            VK_API_VERSION_1_3 };
+	return &app;
+}
+
+VkInstance
+vk_create_instance(PFN_vkGetInstanceProcAddr, const VkApplicationInfo *app,
+                   retro_vulkan_create_instance_wrapper_t wrapper, void *opaque)
+{
+	VkInstanceCreateInfo info{};
+
+	info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+	info.pApplicationInfo = app;
+	return wrapper(opaque, &info);
+}
+
+bool
+vk_create_device2(retro_vulkan_context *context, VkInstance instance, VkPhysicalDevice gpu, VkSurfaceKHR surface,
+                  PFN_vkGetInstanceProcAddr gipa, retro_vulkan_create_device_wrapper_t wrapper, void *opaque)
+{
+	std::string why;
+
+	vk_card = vk::Context::make_libretro(
+		gipa, instance, gpu, surface,
+		[&](VkPhysicalDevice chosen, const VkDeviceCreateInfo &info) { return wrapper(chosen, opaque, &info); }, why);
+	if (!vk_card) {
+		log(RETRO_LOG_ERROR, "Vulkan: %s\n", why.c_str());
+		return false;
+	}
+	context->gpu = vk_card->gpu();
+	context->device = vk_card->device();
+	context->queue = vk_card->queue();
+	context->queue_family_index = vk_card->queue_family();
+	context->presentation_queue = context->queue;
+	context->presentation_queue_family_index = context->queue_family_index;
+	return true;
+}
+
+/* Before the frontend destroys the device: Odin's card goes */
+void
+vk_destroy_device()
+{
+	if (core)
+		core->screen.renderer.reset();
+	vk_destroy_outputs();
+	vk_card.reset();
+	vk_iface = nullptr;
+}
+
+const retro_hw_render_context_negotiation_interface_vulkan vk_negotiation = {
+	RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN,
+	RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN_VERSION,
+	vk_application_info,
+	nullptr,
+	vk_destroy_device,
+	vk_create_instance,
+	vk_create_device2,
+};
+
+/* The picture of the frame (the renderer's image, vk::Context::picture)
+ * copied into the image of the frontend's sync index, which the frontend
+ * samples once the copy's semaphore is signalled */
+void
+present_vk(HostPicture picture)
+{
+	vk::Image *const from = vk_card && vk_iface ? vk_card->picture(picture.id) : nullptr;
+
+	if (!from || !picture.w || !picture.h) {
+		video_cb(nullptr, picture.w ? picture.w : Renderer::WIDTH, picture.h ? picture.h : Renderer::HEIGHT, 0);
+		return;
+	}
+	vk_iface->wait_sync_index(vk_iface->handle);
+	const uint32_t index = vk_iface->get_sync_index(vk_iface->handle);
+	if (index >= vk_outputs.size())
+		vk_outputs.resize(index + 1);
+	VkOutput &out = vk_outputs[index];
+	if (out.image.w != picture.w || out.image.h != picture.h) {
+		vk_card->destroy_image(out.image);
+		out.image = vk_card->make_image(VK_FORMAT_R8G8B8A8_UNORM, picture.w, picture.h, 1,
+		                                VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+	}
+	if (!out.done) {
+		const VkSemaphoreCreateInfo info{ VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, nullptr, 0 };
+		vk_card->check(vk_card->fn().vkCreateSemaphore(vk_card->device(), &info, nullptr, &out.done), "a semaphore");
+	}
+
+	const VkCommandBuffer cb = vk_card->commands();
+	const VkImageCopy region{ { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 }, { 0, 0, 0 }, { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+		                  { 0, 0, 0 }, { picture.w, picture.h, 1 } };
+
+	vk_card->barrier(cb, *from, vk::COPIED_FROM);
+	vk_card->barrier(cb, out.image, vk::COPIED_TO);
+	vk_card->fn().vkCmdCopyImage(cb, from->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, out.image.image,
+	                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+	vk_card->barrier(cb, out.image, vk::SAMPLED);
+	vk_card->end_frame({ VK_NULL_HANDLE, out.done });
+
+	retro_vulkan_image image{};
+	image.image_view = out.image.view;
+	image.image_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	image.create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	image.create_info.image = out.image.image;
+	image.create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	image.create_info.format = VK_FORMAT_R8G8B8A8_UNORM;
+	image.create_info.components = { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+		                         VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY };
+	image.create_info.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+	vk_iface->set_image(vk_iface->handle, &image, 1, &out.done, vk_card->queue_family());
+	video_cb(RETRO_HW_FRAME_BUFFER_VALID, picture.w, picture.h, 0);
 }
 
 /* The picture of the frame into the frontend's framebuffer, as large as it
@@ -658,18 +847,22 @@ context_destroy()
 void
 present(HostPicture picture)
 {
-	if (!picture.id || !picture.w || !picture.h) {
-		video_cb(nullptr, Renderer::WIDTH, Renderer::HEIGHT, 0);
-		return;
-	}
 	/* The size it is handed over at follows Internal Resolution */
-	if (picture.w != core->shown_w || picture.h != core->shown_h) {
+	if (picture.w && picture.h && (picture.w != core->shown_w || picture.h != core->shown_h)) {
 		retro_game_geometry geometry{ picture.w, picture.h, Renderer::WIDTH * MOST_SCALE,
 		                              Renderer::HEIGHT * MOST_SCALE, 4.0f / 3.0f };
 
 		environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &geometry);
 		core->shown_w = picture.w;
 		core->shown_h = picture.h;
+	}
+	if (api == Api::VULKAN) {
+		present_vk(picture);
+		return;
+	}
+	if (!picture.id || !picture.w || !picture.h) {
+		video_cb(nullptr, Renderer::WIDTH, Renderer::HEIGHT, 0);
+		return;
 	}
 	/* The picture is the renderer's framebuffer (DrawingGl::frame_picture),
 	 * read from as the desktop's GlGraphics::read does */
@@ -848,21 +1041,53 @@ retro_load_game(const retro_game_info *info)
 	retro_pixel_format format = RETRO_PIXEL_FORMAT_XRGB8888;
 	environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format);
 
-	std::memset(&hw_render, 0, sizeof(hw_render));
-	hw_render.context_type = RETRO_HW_CONTEXT_OPENGL_CORE;
-	hw_render.version_major = 4;
-	hw_render.version_minor = 3;
-	hw_render.context_reset = context_reset;
-	hw_render.context_destroy = context_destroy;
-	hw_render.depth = true;
-	hw_render.stencil = false;
-	hw_render.bottom_left_origin = true;
-	if (!environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &hw_render)) {
-		log(RETRO_LOG_ERROR, "the frontend gave no OpenGL 4.3 core context\n");
-		message("Odin needs OpenGL 4.3: set Settings > Drivers > Video to glcore", 600);
-		core.reset();
-		return false;
+	/* Renderer: the one asked for, or with Automatic the one of the
+	 * frontend's video driver; the other one when the frontend cannot give
+	 * that one */
+	const char *renderer_option = option_value("odin_renderer");
+	bool want_vulkan;
+	if (renderer_option && !std::strcmp(renderer_option, "vulkan"))
+		want_vulkan = true;
+	else if (renderer_option && !std::strcmp(renderer_option, "opengl"))
+		want_vulkan = false;
+	else {
+		unsigned preferred = RETRO_HW_CONTEXT_NONE;
+		want_vulkan = environ_cb(RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER, &preferred) &&
+		              preferred == RETRO_HW_CONTEXT_VULKAN;
 	}
+	const auto set_context = [](bool vulkan) {
+		std::memset(&hw_render, 0, sizeof(hw_render));
+		hw_render.context_reset = context_reset;
+		hw_render.context_destroy = context_destroy;
+		if (vulkan) {
+			hw_render.context_type = RETRO_HW_CONTEXT_VULKAN;
+			hw_render.version_major = VK_API_VERSION_1_3;
+		} else {
+			hw_render.context_type = RETRO_HW_CONTEXT_OPENGL_CORE;
+			hw_render.version_major = 4;
+			hw_render.version_minor = 3;
+			hw_render.depth = true;
+			hw_render.bottom_left_origin = true;
+		}
+		if (!environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &hw_render))
+			return false;
+		if (vulkan)
+			environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE,
+			           const_cast<retro_hw_render_context_negotiation_interface_vulkan *>(&vk_negotiation));
+		api = vulkan ? Api::VULKAN : Api::OPENGL;
+		return true;
+	};
+	if (!set_context(want_vulkan)) {
+		if (!set_context(!want_vulkan)) {
+			log(RETRO_LOG_ERROR, "the frontend gave neither Vulkan nor an OpenGL 4.3 core context\n");
+			message("Odin needs Vulkan 1.3 or OpenGL 4.3: set Settings > Drivers > Video to vulkan or glcore", 600);
+			core.reset();
+			return false;
+		}
+		message(std::string("Odin: RetroArch could not give the core ") + (want_vulkan ? "Vulkan" : "OpenGL") +
+		        "; running on " + (want_vulkan ? "OpenGL" : "Vulkan"));
+	}
+	log(RETRO_LOG_INFO, "renderer: %s\n", api == Api::VULKAN ? "Vulkan" : "OpenGL");
 
 	core->board = Hikaru::make(*core->game, false);
 	if (!core->board) {
@@ -940,8 +1165,9 @@ retro_run(void)
 
 	/* What the frontend left in the error flag is not the renderer's,
 	 * which stops on any error it finds after a frame (gl::check) */
-	while (glGetError() != GL_NO_ERROR)
-		;
+	if (api == Api::OPENGL)
+		while (glGetError() != GL_NO_ERROR)
+			;
 	const auto draw = [&] {
 		/* As the desktop's Display::draw sets them, right before the drawing */
 		renderer.set_scale(core->scale);

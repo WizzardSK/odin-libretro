@@ -28,12 +28,13 @@ set(LR src/odin)
 file(GLOB_RECURSE LR_MACHINE CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/odin/machine/*.cpp)
 file(GLOB LR_RENDERER CONFIGURE_DEPENDS
 	${CMAKE_SOURCE_DIR}/src/odin/host/renderer/hikaru/*.cpp
-	${CMAKE_SOURCE_DIR}/src/odin/host/renderer/hikaru/gl/*.cpp)
+	${CMAKE_SOURCE_DIR}/src/odin/host/renderer/hikaru/gl/*.cpp
+	${CMAKE_SOURCE_DIR}/src/odin/host/renderer/hikaru/vk/*.cpp)
 set(LR_SOURCES
 	${LR_MACHINE} ${LR_RENDERER}
 	${LR}/common/cabinet_settings.cpp ${LR}/common/wav_file.cpp
-	${LR}/host/gfx/gl_common.cpp ${LR}/host/gfx/program_cache.cpp
-	${LR}/host/video/picture_filter_gl.cpp ${LR}/host/video/picture_preset.cpp
+	${LR}/host/gfx/gl_common.cpp ${LR}/host/gfx/program_cache.cpp ${LR}/host/gfx/vk_common.cpp
+	${LR}/host/video/picture_filter_gl.cpp ${LR}/host/video/picture_filter_vk.cpp ${LR}/host/video/picture_preset.cpp
 	${LR}/host/ui/loading_screen.cpp
 	${LR}/host/input/roles.cpp ${LR}/host/input/sockets.cpp
 	${LR}/host/app/games.cpp ${LR}/host/app/rom_files.cpp ${LR}/host/app/user_files.cpp
@@ -52,11 +53,54 @@ set_source_files_properties(src/odin/host/app/zip_crc.cpp PROPERTIES
 set_source_files_properties(src/odin/host/app/rom_files.cpp PROPERTIES
 	COMPILE_OPTIONS "-isystem;${CMAKE_SOURCE_DIR}/src/miniz;-isystem;${CMAKE_SOURCE_DIR}/src/lzma")
 
+# Vulkan: the shaders to SPIR-V, as the program builds them (top
+# CMakeLists.txt), and the Vulkan headers from 3rdparty/
+if(NOT GLSLANG)
+	message(FATAL_ERROR "glslangValidator not found: set -DGLSLANG=<path>")
+endif()
+set(GLSL ${CMAKE_SOURCE_DIR}/src/odin/host/gfx/glsl)
+set(GLSL ${CMAKE_SOURCE_DIR}/src/odin/host/gfx/glsl)
+set(SPIRV_DIR ${CMAKE_BINARY_DIR}/spirv)
+file(MAKE_DIRECTORY ${SPIRV_DIR}/glsl)
+set(SPIRV)
+foreach(shader whole_picture.vert blend.frag compose.vert compose.frag present.frag
+		mesh.vert mesh.geom mesh.frag sort.frag image.vert image.frag whole_window.vert
+		blur.frag show.frag average.frag sides.frag)
+	string(REGEX REPLACE ".*\\." "" stage ${shader})
+	set(out ${SPIRV_DIR}/glsl/${shader}.spv)
+	if(shader STREQUAL "sort.frag")
+		set(script "{ echo '#version 450'; echo '#define LISTS_SET 0'; cat \"$2\" \"$3\"; } | \"$0\" -V --stdin -S frag -o \"$1\"")
+		set(inputs ${GLSL}/fragment_lists.glsl ${GLSL}/${shader})
+	else()
+		set(script "{ echo '#version 450'; cat \"$2\"; } | \"$0\" -V --stdin -S ${stage} -o \"$1\"")
+		set(inputs ${GLSL}/${shader})
+	endif()
+	add_custom_command(OUTPUT ${out}
+		COMMAND sh -c "${script}" ${GLSLANG} ${out} ${inputs}
+		DEPENDS ${inputs} VERBATIM)
+	list(APPEND SPIRV ${out})
+endforeach()
+set(out ${SPIRV_DIR}/glsl/mesh_collect.frag.spv)
+add_custom_command(OUTPUT ${out}
+	COMMAND sh -c "{ echo '#version 450'; echo '#define COLLECT 1'; echo '#define LISTS_SET 3'; cat \"$2\" \"$3\"; } | \"$0\" -V --stdin -S frag -o \"$1\""
+		${GLSLANG} ${out} ${GLSL}/fragment_lists.glsl ${GLSL}/mesh.frag
+	DEPENDS ${GLSL}/fragment_lists.glsl ${GLSL}/mesh.frag VERBATIM)
+list(APPEND SPIRV ${out})
+set(out ${SPIRV_DIR}/glsl/mesh_families.frag.spv)
+add_custom_command(OUTPUT ${out}
+	COMMAND sh -c "{ echo '#version 450'; echo '#define FAMILIES 1'; cat \"$2\"; } | \"$0\" -V --stdin -S frag -o \"$1\""
+		${GLSLANG} ${out} ${GLSL}/mesh.frag
+	DEPENDS ${GLSL}/mesh.frag VERBATIM)
+list(APPEND SPIRV ${out})
+
+
 # The shaders' texts and the game list, in the binary
 set(LR_GFX ${CMAKE_SOURCE_DIR}/src/odin/host/gfx)
 file(GLOB LR_GLSL_FILES CONFIGURE_DEPENDS ${LR_GFX}/glsl/*)
 list(FILTER LR_GLSL_FILES EXCLUDE REGEX "\\.spv$")
-set(LR_EMBEDDED ${LR_GFX}/glsl_texts.S ${CMAKE_SOURCE_DIR}/src/odin/libretro/games_json.S)
+set(LR_EMBEDDED ${LR_GFX}/glsl_texts.S ${LR_GFX}/spirv.S ${SPIRV} ${CMAKE_SOURCE_DIR}/src/odin/libretro/games_json.S)
+set_source_files_properties(${LR_GFX}/spirv.S PROPERTIES
+	COMPILE_OPTIONS "-Wa,-I,${SPIRV_DIR}" OBJECT_DEPENDS "${SPIRV}")
 set_source_files_properties(${LR_GFX}/glsl_texts.S PROPERTIES
 	COMPILE_OPTIONS "-Wa,-I,${LR_GFX}" OBJECT_DEPENDS "${LR_GLSL_FILES}")
 set_source_files_properties(${CMAKE_SOURCE_DIR}/src/odin/libretro/games_json.S PROPERTIES
@@ -68,7 +112,9 @@ set_target_properties(odin_libretro PROPERTIES PREFIX "" OUTPUT_NAME odin_libret
 	CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON
 	LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR} RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 target_include_directories(odin_libretro PRIVATE src src/odin/libretro src/odin/libretro/shim)
-target_compile_definitions(odin_libretro PRIVATE ODIN_LIBRETRO)
+target_include_directories(odin_libretro SYSTEM PRIVATE 3rdparty/Vulkan-Headers/include)
+# VK_KHR_portability_subset (MoltenVK) is a beta extension (vk_common.cpp)
+target_compile_definitions(odin_libretro PRIVATE ODIN_LIBRETRO VK_ENABLE_BETA_EXTENSIONS)
 if(NOT ODIN_VERSION STREQUAL "")
 	target_compile_definitions(odin_libretro PRIVATE ODIN_LIBRETRO_VERSION="${ODIN_VERSION}")
 endif()
