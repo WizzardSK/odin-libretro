@@ -877,6 +877,12 @@ context_destroy()
 			vk_destroy_device();
 		return;
 	}
+	/* The board's thread may be running a frame, which tells the screen
+	 * (and so the renderer) what it writes: done first, and the frame it
+	 * ran is not drawn on the renderer of the next context */
+	if (core->board_thread.running())
+		core->board_thread.wait();
+	core->frame_pending = false;
 	core->screen.renderer.reset();
 	core->context_ready = false;
 	if (api == Api::VULKAN)
