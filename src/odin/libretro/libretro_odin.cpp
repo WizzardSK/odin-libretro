@@ -570,6 +570,8 @@ present(HostPicture picture)
 	                  static_cast<GLint>(picture.w), static_cast<GLint>(picture.h), GL_COLOR_BUFFER_BIT, GL_NEAREST);
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 	glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(hw_render.get_current_framebuffer()));
+	if (const GLenum error = glGetError(); error != GL_NO_ERROR)
+		log(RETRO_LOG_WARN, "OpenGL error 0x%04X handing the picture over (%ux%u)\n", error, picture.w, picture.h);
 	video_cb(RETRO_HW_FRAME_BUFFER_VALID, picture.w, picture.h, 0);
 }
 
@@ -808,12 +810,17 @@ retro_run(void)
 
 	Renderer &renderer = *core->screen.renderer;
 
-	renderer.set_scale(core->scale);
-	renderer.set_upscale_mode(core->upscale_mode);
-	renderer.set_anisotropy(core->anisotropy);
+	/* What the frontend left in the error flag is not the renderer's,
+	 * which stops on any error it finds after a frame (gl::check) */
+	while (glGetError() != GL_NO_ERROR)
+		;
 	renderer.begin_frame();
 	core->board->run_frame();
 	renderer.take_frame(core->board->frame(), Renderer::WIDTH, Renderer::HEIGHT);
+	/* As the desktop's Display::draw sets them, right before the drawing */
+	renderer.set_scale(core->scale);
+	renderer.set_upscale_mode(core->upscale_mode);
+	renderer.set_anisotropy(core->anisotropy);
 	renderer.draw_frame();
 	present(renderer.frame_picture());
 	play_sound();
