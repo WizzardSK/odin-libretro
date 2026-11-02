@@ -875,6 +875,12 @@ present_vk(HostPicture picture)
 
 	vk_card->barrier(cb, *from, vk::COPIED_FROM);
 	vk_card->barrier(cb, out.image, vk::COPIED_TO);
+	static const bool test_red = std::getenv("ODIN_LR_VK_RED") != nullptr; /* TEMP */
+	if (test_red) {
+		const VkClearColorValue red{ { 1.0f, 0.0f, 0.0f, 1.0f } };
+		const VkImageSubresourceRange range{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+		vk_card->fn().vkCmdClearColorImage(cb, out.image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &red, 1, &range);
+	} else
 	vk_card->fn().vkCmdCopyImage(cb, from->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, out.image.image,
 	                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 	vk_card->barrier(cb, out.image, vk::SAMPLED);
