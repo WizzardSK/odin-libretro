@@ -1,0 +1,49 @@
+name: libretro core
+
+on:
+  push:
+    branches: [libretro]
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: libretro core (linux-${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Submodules (GLEW and jansson only)
+        run: git submodule update --init --depth 1 3rdparty/glew 3rdparty/jansson
+      # glibc 2.35, for the frontends that run on older distributions; GCC 13
+      # from the toolchain PPA for C++20's <format>, its libstdc++ linked in
+      - name: Packages
+        run: |
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install -y g++-13 cmake ninja-build libopengl-dev libgl-dev
+      - name: Build
+        run: |
+          cmake -B build -G Ninja -DODIN_LIBRETRO=ON -DODIN_NATIVE=OFF \
+            -DCMAKE_C_COMPILER=gcc-13 -DCMAKE_CXX_COMPILER=g++-13 \
+            -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \
+            -DODIN_VERSION="$(git rev-parse --short HEAD)"
+          cmake --build build -j$(nproc)
+      - name: Check
+        run: |
+          ls -l build/odin_libretro.so
+          readelf -d build/odin_libretro.so | grep NEEDED
+          objdump -T build/odin_libretro.so | grep -c ' retro_' || true
+          objdump -T build/odin_libretro.so | grep GLIBC_ | sed 's/.*GLIBC_/GLIBC_/' | sort -Vu | tail -1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: odin_libretro-linux-${{ matrix.arch }}
+          path: build/odin_libretro.so
