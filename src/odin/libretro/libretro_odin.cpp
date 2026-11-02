@@ -655,6 +655,7 @@ create_renderer()
 }
 
 void vk_destroy_outputs();
+void vk_destroy_device();
 
 void
 context_reset_vk()
@@ -704,12 +705,18 @@ void
 context_destroy()
 {
 	log(RETRO_LOG_INFO, "context destroyed\n");
-	if (!core)
+	/* The frontend destroys its device right after (it did not call
+	 * destroy_device): Odin's card goes now, with everything it made on
+	 * that device; the next context makes a new one (vk_create_device) */
+	if (!core) {
+		if (api == Api::VULKAN)
+			vk_destroy_device();
 		return;
+	}
 	core->screen.renderer.reset();
 	core->context_ready = false;
 	if (api == Api::VULKAN)
-		vk_destroy_outputs();
+		vk_destroy_device();
 }
 
 /* ─── Vulkan ───────────────────────────────────────────────────────────── */
