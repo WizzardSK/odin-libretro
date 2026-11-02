@@ -47,3 +47,40 @@ jobs:
         with:
           name: odin_libretro-linux-${{ matrix.arch }}
           path: build/odin_libretro.so
+
+  windows:
+    name: libretro core (windows-x86_64)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+      - name: Submodules (GLEW and jansson only)
+        run: git submodule update --init --depth 1 3rdparty/glew 3rdparty/jansson
+      - name: Build
+        run: |
+          cmake -B build -G Ninja -DODIN_LIBRETRO=ON -DODIN_NATIVE=OFF \
+            -DCMAKE_C_FLAGS=-march=x86-64-v2 -DCMAKE_CXX_FLAGS=-march=x86-64-v2 \
+            -DODIN_VERSION="$(git rev-parse --short HEAD)"
+          cmake --build build
+      - name: Check
+        run: |
+          ls -l build/odin_libretro.dll
+          objdump -p build/odin_libretro.dll | grep "DLL Name"
+          objdump -p build/odin_libretro.dll | grep -c " retro_" || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: odin_libretro-windows-x86_64
+          path: build/odin_libretro.dll

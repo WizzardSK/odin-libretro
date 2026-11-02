@@ -10,7 +10,7 @@ cmake -B build -DODIN_LIBRETRO=ON -DODIN_NATIVE=OFF
 cmake --build build
 ```
 
-The core is `build/odin_libretro.so` (`.dll` on Windows); `odin_libretro.info` goes in RetroArch's `info/` folder. On Linux it links only `libOpenGL.so.0` (glvnd), no X11. The CI builds it for Linux x86_64 and aarch64 (`.github/workflows/libretro.yml`).
+The core is `build/odin_libretro.so` (`.dll` on Windows); `odin_libretro.info` goes in RetroArch's `info/` folder. On Linux it links only `libOpenGL.so.0` (glvnd), no X11. The CI builds it for Linux x86_64 and aarch64 and for Windows x86_64 with MSYS2 UCRT64 (`.github/workflows/libretro.yml`).
 
 ## Playing
 
@@ -18,6 +18,7 @@ The core is `build/odin_libretro.so` (`.dll` on Windows); `odin_libretro.info` g
 - The shared sets `hikaru` and `mie` (and the optional `jvs13551`, `18wheelr`, `srally2`) go beside the game or in `system/odin`. A missing file is named in RetroArch's log with the set it belongs to.
 - RetroArch's video driver has to be `glcore` (OpenGL 4.3).
 - What the board keeps without power (its EEPROMs, backup RAM, Virtual-On's card) goes to `saves/odin/<game>`.
+- Save states work; a state loads only into the build of the core that made it.
 
 ## Controls
 
@@ -45,4 +46,4 @@ The controls of each game come from its list (`odin-games.json`), by their roles
 
 ## Not there yet
 
-Save states, Vulkan, Windows and macOS builds, network links between cabinets, force feedback.
+Vulkan, a macOS build, network links between cabinets, force feedback.

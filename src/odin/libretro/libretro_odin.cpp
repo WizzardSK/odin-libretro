@@ -469,6 +469,8 @@ read_options(Core &c)
 }
 
 std::unique_ptr<Core> core;
+/* The size of a save state the frontend is told (retro_serialize_size) */
+size_t state_size;
 
 /* The game list, written to system/odin/odin-games.json the first time and
  * whenever this build's differs, then read from there: the desktop's code
@@ -696,6 +698,7 @@ retro_load_game(const retro_game_info *info)
 		return false;
 
 	core = std::make_unique<Core>();
+	state_size = 0;
 	const char *dir = nullptr;
 	core->system_dir = environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &dir) && dir ? dir : ".";
 	dir = nullptr;
@@ -855,10 +858,98 @@ retro_reset(void)
 		core->board->reset();
 }
 
-/* Save states come later: the board writes them to files (hikaru_state.cpp) */
-RETRO_API size_t retro_serialize_size(void) { return 0; }
-RETRO_API bool retro_serialize(void *, size_t) { return false; }
-RETRO_API bool retro_unserialize(const void *, size_t) { return false; }
+/* Save states. The board writes and reads them as files (StateFile,
+ * hikaru_state.cpp): through a file of the core's own beside the game's
+ * saves, whose bytes the frontend gets after a header of their count. Their
+ * size changes little from a frame to the next; the frontend's buffer is
+ * the size of the first one with room to spare (STATE_ROOM). */
+namespace {
+
+constexpr size_t STATE_HEADER = 8, STATE_ROOM = 1 << 20;
+
+std::string
+state_temp()
+{
+	return (fs::path(core->save_dir) / ("odin-" + core->game->name + ".state.tmp")).string();
+}
+
+/* The board's state as bytes, or nothing */
+std::optional<std::vector<uint8_t>>
+state_bytes()
+{
+	if (!core || !core->board)
+		return std::nullopt;
+	const std::string path = state_temp();
+	std::error_code ec;
+
+	if (!core->board->save_state(path)) {
+		fs::remove(path, ec);
+		return std::nullopt;
+	}
+	std::ifstream in(path, std::ios::binary);
+	std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+	in.close();
+	fs::remove(path, ec);
+	return bytes;
+}
+
+} /* namespace */
+
+RETRO_API size_t
+retro_serialize_size(void)
+{
+	if (!state_size) {
+		const std::optional<std::vector<uint8_t>> bytes = state_bytes();
+
+		if (bytes)
+			state_size = STATE_HEADER + bytes->size() + STATE_ROOM;
+	}
+	return state_size;
+}
+
+RETRO_API bool
+retro_serialize(void *data, size_t size)
+{
+	const std::optional<std::vector<uint8_t>> bytes = state_bytes();
+
+	if (!bytes || STATE_HEADER + bytes->size() > size) {
+		if (bytes)
+			log(RETRO_LOG_ERROR, "save state: %zu bytes, more than the %zu the frontend has room for\n",
+			    bytes->size(), size);
+		return false;
+	}
+	const uint64_t count = bytes->size();
+	std::memcpy(data, &count, STATE_HEADER);
+	std::memcpy(static_cast<uint8_t *>(data) + STATE_HEADER, bytes->data(), bytes->size());
+	return true;
+}
+
+RETRO_API bool
+retro_unserialize(const void *data, size_t size)
+{
+	uint64_t count = 0;
+
+	if (!core || !core->board || size < STATE_HEADER)
+		return false;
+	std::memcpy(&count, data, STATE_HEADER);
+	if (count > size - STATE_HEADER)
+		return false;
+
+	const std::string path = state_temp();
+	{
+		std::ofstream out(path, std::ios::binary | std::ios::trunc);
+		out.write(static_cast<const char *>(data) + STATE_HEADER, static_cast<std::streamsize>(count));
+		if (!out)
+			return false;
+	}
+	const bool ok = core->board->load_state(path);
+	std::error_code ec;
+
+	fs::remove(path, ec);
+	if (!ok)
+		log(RETRO_LOG_ERROR, "save state: not one of this game and build; the game started again\n");
+	return ok;
+}
 RETRO_API void retro_cheat_reset(void) {}
 RETRO_API void retro_cheat_set(unsigned, bool, const char *) {}
 RETRO_API void *retro_get_memory_data(unsigned) { return nullptr; }
