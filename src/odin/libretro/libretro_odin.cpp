@@ -1881,6 +1881,12 @@ retro_reset(void)
 	core->board_thread.stop();
 	core->board->power_off();
 	core->frame_pending = false;
+	/* The renderer reads the old board's memory (create_renderer): it goes
+	 * first and is made again for the new board, as the desktop attaches
+	 * its renderer to each run */
+	if (api == Api::VULKAN && vk_card)
+		vk_card->fn().vkDeviceWaitIdle(vk_card->device());
+	core->screen.renderer.reset();
 	std::unique_ptr<Hikaru> board = Hikaru::make(*core->game, false);
 	if (!board) {
 		log(RETRO_LOG_ERROR, "reset: the board could not be made again\n");
@@ -1892,6 +1898,8 @@ retro_reset(void)
 	core->board->set_panel(&core->panel);
 	core->board->keep_in(game_saves());
 	core->board->reset();
+	if (core->context_ready)
+		create_renderer();
 	if (core->threaded)
 		core->board_thread.start(*core->board);
 	log(RETRO_LOG_INFO, "reset: the board made again\n");
