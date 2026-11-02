@@ -1161,6 +1161,75 @@ present(HostPicture picture)
 	video_cb(RETRO_HW_FRAME_BUFFER_VALID, picture.w, picture.h, 0);
 }
 
+/* How hard the optional board's sound would shake a vibration device, 0 to
+ * 0xFFFF, and a level smoothed over the frames (AudioOut::shake_of,
+ * AudioOut::smoothed, which come with the desktop's sound) */
+uint16_t
+shake_of(std::span<const int16_t> stereo)
+{
+	const size_t frames = stereo.size() / 2;
+	double sum = 0;
+
+	for (size_t i = 0; i < frames; i++) {
+		const double both = (stereo[2 * i] + stereo[2 * i + 1]) / 2.0;
+		sum += both * both;
+	}
+	const double level = frames ? std::sqrt(sum / static_cast<double>(frames)) / 32768.0 : 0;
+
+	return level < 1.0 / 32 ? 0 : static_cast<uint16_t>(std::lround(std::min(1.0, level * 2) * 0xFFFF));
+}
+
+uint16_t
+smoothed(uint16_t was, uint16_t now)
+{
+	return static_cast<uint16_t>((3 * was + now) / 4);
+}
+
+/* The pads shaken by the frame's outputs, as Controls::show shakes the
+ * desktop's gamepads: a rumble output of a player at 0xC000, and player 1's
+ * pad also as the vibration device the optional board's sound drives and
+ * the jolts of the drive board's wheel */
+void
+shake_pads()
+{
+	constexpr uint16_t RUMBLE = 0xC000, FELT_STEP = 0x1000;
+	Core &c = *core;
+
+	if (!c.set_rumble)
+		return;
+	uint16_t strength[2] = {};
+	if (c.rumble) {
+		const std::span<const uint8_t> outputs = c.board->io_outputs();
+		const Game &game = *c.game;
+		const bool still = any_on(game.outputs, GameOutput::Role::MUTE, outputs);
+
+		c.felt_level = game.option_vibration && !still ? smoothed(c.felt_level, shake_of(c.board->sound(true))) : 0;
+		const int force = game.drive_first_output ?
+		                          DriveBoard::force_of(DriveBoard::command(outputs, game.drive_first_output)) :
+		                          0;
+		const uint16_t wheel = c.panel.steer_channel();
+		c.wheel_moves[c.wheel_move++ % c.wheel_moves.size()] = std::abs(wheel - c.wheel_was) / 65535.0;
+		c.wheel_was = wheel;
+		const double moved = *std::max_element(c.wheel_moves.begin(), c.wheel_moves.end());
+		const uint16_t jolt = DriveBoard::jolt_of(force - c.force_was, moved);
+		c.force_was = force;
+		c.drive_level = std::max(jolt, smoothed(c.drive_level, jolt));
+		const uint16_t felt = static_cast<uint16_t>(std::max(c.felt_level, c.drive_level) / FELT_STEP * FELT_STEP);
+
+		for (unsigned player = 0; player < 2; player++) {
+			const bool on = any_on(game.outputs, GameOutput::Role::RUMBLE, outputs, static_cast<int>(player));
+			strength[player] = std::max<uint16_t>(on ? RUMBLE : 0, player ? 0 : felt);
+		}
+	}
+	for (unsigned player = 0; player < 2; player++) {
+		if (strength[player] == c.rumbling[player])
+			continue;
+		c.set_rumble(player, RETRO_RUMBLE_STRONG, strength[player]);
+		c.set_rumble(player, RETRO_RUMBLE_WEAK, strength[player]);
+		c.rumbling[player] = strength[player];
+	}
+}
+
 /* The sound buffered for the frontend's audio thread (Audio Thread), at
  * most half a second of it */
 std::mutex audio_mutex;
