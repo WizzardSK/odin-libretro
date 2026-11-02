@@ -769,6 +769,59 @@ vk_create_device2(retro_vulkan_context *context, VkInstance instance, VkPhysical
 	return true;
 }
 
+/* Negotiation interface 1, which RetroArch uses where it does not take
+ * create_device2: the core makes the device itself, with the extensions,
+ * layers and features the frontend names added to Odin's */
+bool
+vk_create_device(retro_vulkan_context *context, VkInstance instance, VkPhysicalDevice gpu, VkSurfaceKHR surface,
+                 PFN_vkGetInstanceProcAddr gipa, const char **required_extensions, unsigned num_extensions,
+                 const char **required_layers, unsigned num_layers, const VkPhysicalDeviceFeatures *required_features)
+{
+	const auto create = [&](VkPhysicalDevice chosen, const VkDeviceCreateInfo &info) -> VkDevice {
+		std::vector<const char *> extensions(info.ppEnabledExtensionNames,
+		                                     info.ppEnabledExtensionNames + info.enabledExtensionCount);
+		for (unsigned i = 0; i < num_extensions; i++)
+			if (std::none_of(extensions.begin(), extensions.end(),
+			                 [&](const char *e) { return !std::strcmp(e, required_extensions[i]); }))
+				extensions.push_back(required_extensions[i]);
+		/* Odin's features are in a VkPhysicalDeviceFeatures2 at the head of
+		 * the chain (vk_common.cpp, make_device): the frontend's join them */
+		if (required_features && info.pNext) {
+			auto *features2 = static_cast<VkPhysicalDeviceFeatures2 *>(const_cast<void *>(info.pNext));
+			if (features2->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2) {
+				auto *mine = reinterpret_cast<VkBool32 *>(&features2->features);
+				const auto *theirs = reinterpret_cast<const VkBool32 *>(required_features);
+				for (size_t i = 0; i < sizeof(VkPhysicalDeviceFeatures) / sizeof(VkBool32); i++)
+					mine[i] = mine[i] || theirs[i];
+			}
+		}
+		VkDeviceCreateInfo copy = info;
+		copy.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
+		copy.ppEnabledExtensionNames = extensions.data();
+		copy.enabledLayerCount = num_layers;
+		copy.ppEnabledLayerNames = required_layers;
+		const auto create_device = reinterpret_cast<PFN_vkCreateDevice>(gipa(instance, "vkCreateDevice"));
+		VkDevice device = VK_NULL_HANDLE;
+		if (!create_device || create_device(chosen, &copy, nullptr, &device) != VK_SUCCESS)
+			return VK_NULL_HANDLE;
+		return device;
+	};
+	std::string why;
+
+	vk_card = vk::Context::make_libretro(gipa, instance, gpu, surface, create, why);
+	if (!vk_card) {
+		log(RETRO_LOG_ERROR, "Vulkan: %s\n", why.c_str());
+		return false;
+	}
+	context->gpu = vk_card->gpu();
+	context->device = vk_card->device();
+	context->queue = vk_card->queue();
+	context->queue_family_index = vk_card->queue_family();
+	context->presentation_queue = context->queue;
+	context->presentation_queue_family_index = context->queue_family_index;
+	return true;
+}
+
 /* Before the frontend destroys the device: Odin's card goes */
 void
 vk_destroy_device()
@@ -784,7 +837,7 @@ const retro_hw_render_context_negotiation_interface_vulkan vk_negotiation = {
 	RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN,
 	RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN_VERSION,
 	vk_application_info,
-	nullptr,
+	vk_create_device,
 	vk_destroy_device,
 	vk_create_instance,
 	vk_create_device2,
