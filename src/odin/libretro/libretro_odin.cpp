@@ -23,6 +23,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -417,7 +418,56 @@ struct Core {
 	bool context_ready = false;
 	GLuint read_fbo = 0;
 	std::vector<int16_t> mixed;
+	/* Core options (read_options) */
+	unsigned scale = 1, anisotropy = 1;
+	DisplayUpscaleMode upscale_mode = DisplayUpscaleMode::SNAP;
+	unsigned shown_w = 0, shown_h = 0;
+	/* The speed, in the log every SPEED_FRAMES frames */
+	std::chrono::steady_clock::time_point speed_since;
+	unsigned speed_frames = 0;
 };
+
+constexpr unsigned MOST_SCALE = 6;
+constexpr unsigned SPEED_FRAMES = 600;
+
+/* The options, as the desktop's [display] has them (OPTIONS) */
+retro_core_option_definition option_defs[] = {
+	{ "odin_scale", "Internal Resolution",
+	  "The 3D drawn that many times finer than the board's 640x480 screen; the 2D layers stay as they are.",
+	  { { "1", "1x (640x480)" }, { "2", "2x (1280x960)" }, { "3", "3x (1920x1440)" }, { "4", "4x (2560x1920)" },
+	    { "5", "5x (3200x2400)" }, { "6", "6x (3840x2880)" }, { nullptr, nullptr } },
+	  "1" },
+	{ "odin_upscale_mode", "HUD at Higher Resolutions",
+	  "How the meshes flat to the screen (the HUD, its text) are drawn above 1x: Snap, their corners on the board's pixels (default); Native, over the pixels they cover there; Raw, as fine as the rest.",
+	  { { "snap", "Snap" }, { "native", "Native" }, { "raw", "Raw" }, { nullptr, nullptr } },
+	  "snap" },
+	{ "odin_anisotropy", "Anisotropic Filtering",
+	  "Of the texture filter; Off as on the board.",
+	  { { "1", "Off" }, { "2", "2x" }, { "4", "4x" }, { "8", "8x" }, { "16", "16x" }, { nullptr, nullptr } },
+	  "1" },
+	{ nullptr, nullptr, nullptr, { { nullptr, nullptr } }, nullptr },
+};
+
+const char *
+option_value(const char *key)
+{
+	retro_variable var{ key, nullptr };
+
+	return environ_cb && environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value ? var.value : nullptr;
+}
+
+void
+read_options(Core &c)
+{
+	if (const char *v = option_value("odin_scale"))
+		c.scale = std::clamp<unsigned>(static_cast<unsigned>(std::atoi(v)), 1, MOST_SCALE);
+	if (const char *v = option_value("odin_anisotropy"))
+		c.anisotropy = std::clamp<unsigned>(static_cast<unsigned>(std::atoi(v)), 1, 16);
+	if (const char *v = option_value("odin_upscale_mode"))
+		c.upscale_mode = !std::strcmp(v, "native") ? DisplayUpscaleMode::NATIVE :
+		                 !std::strcmp(v, "raw")    ? DisplayUpscaleMode::RAW :
+		                                             DisplayUpscaleMode::SNAP;
+}
 
 std::unique_ptr<Core> core;
 
@@ -501,6 +551,15 @@ present(HostPicture picture)
 		video_cb(nullptr, Renderer::WIDTH, Renderer::HEIGHT, 0);
 		return;
 	}
+	/* The size it is handed over at follows Internal Resolution */
+	if (picture.w != core->shown_w || picture.h != core->shown_h) {
+		retro_game_geometry geometry{ picture.w, picture.h, Renderer::WIDTH * MOST_SCALE,
+		                              Renderer::HEIGHT * MOST_SCALE, 4.0f / 3.0f };
+
+		environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &geometry);
+		core->shown_w = picture.w;
+		core->shown_h = picture.h;
+	}
 	if (!core->read_fbo)
 		glGenFramebuffers(1, &core->read_fbo);
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, core->read_fbo);
@@ -569,6 +628,7 @@ retro_set_environment(retro_environment_t cb)
 		log_cb = logging.log;
 	bool no_game = false;
 	cb(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &no_game);
+	cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS, option_defs);
 }
 
 RETRO_API void retro_set_video_refresh(retro_video_refresh_t cb) { video_cb = cb; }
@@ -596,10 +656,12 @@ RETRO_API void
 retro_get_system_av_info(retro_system_av_info *info)
 {
 	std::memset(info, 0, sizeof(*info));
-	info->geometry.base_width = Renderer::WIDTH;
-	info->geometry.base_height = Renderer::HEIGHT;
-	info->geometry.max_width = Renderer::WIDTH * 4;
-	info->geometry.max_height = Renderer::HEIGHT * 4;
+	const unsigned scale = core ? core->scale : 1;
+
+	info->geometry.base_width = Renderer::WIDTH * scale;
+	info->geometry.base_height = Renderer::HEIGHT * scale;
+	info->geometry.max_width = Renderer::WIDTH * MOST_SCALE;
+	info->geometry.max_height = Renderer::HEIGHT * MOST_SCALE;
 	info->geometry.aspect_ratio = 4.0f / 3.0f;
 	/* The board's frames as the desktop runs them: 60 a second (its own
 	 * timing gives 60.08, hikaru.cpp) */
@@ -667,6 +729,8 @@ retro_load_game(const retro_game_info *info)
 		return false;
 	}
 
+	read_options(*core);
+
 	retro_pixel_format format = RETRO_PIXEL_FORMAT_XRGB8888;
 	environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format);
 
@@ -695,7 +759,12 @@ retro_load_game(const retro_game_info *info)
 	core->panel.set_game(*core->game);
 	core->board->set_screen(&core->screen);
 	core->board->set_panel(&core->panel);
-	core->board->keep_in(SaveFolder((fs::path(core->save_dir) / "odin" / name).string()));
+	/* saves/odin/<game>; saves/Odin/<game> where the frontend already keeps
+	 * each core's saves in a folder of the core's name */
+	const fs::path saves = fs::path(core->save_dir);
+	std::string folder = saves.filename().string();
+	std::transform(folder.begin(), folder.end(), folder.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+	core->board->keep_in(SaveFolder(((folder == "odin" ? saves : saves / "odin") / name).string()));
 	core->board->reset();
 	log(RETRO_LOG_INFO, "%s (%s) loaded\n", core->game->title.c_str(), name.c_str());
 	return true;
@@ -733,14 +802,35 @@ retro_run(void)
 		}
 	}
 
+	bool updated = false;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
+		read_options(*core);
+
 	Renderer &renderer = *core->screen.renderer;
 
+	renderer.set_scale(core->scale);
+	renderer.set_upscale_mode(core->upscale_mode);
+	renderer.set_anisotropy(core->anisotropy);
 	renderer.begin_frame();
 	core->board->run_frame();
 	renderer.take_frame(core->board->frame(), Renderer::WIDTH, Renderer::HEIGHT);
 	renderer.draw_frame();
 	present(renderer.frame_picture());
 	play_sound();
+
+	/* The frames a second the core ran over the last SPEED_FRAMES, for the
+	 * log: the board's 60 is full speed */
+	const auto now = std::chrono::steady_clock::now();
+	if (core->speed_frames++ == 0)
+		core->speed_since = now;
+	else if (core->speed_frames > SPEED_FRAMES) {
+		const double seconds = std::chrono::duration<double>(now - core->speed_since).count();
+
+		log(RETRO_LOG_INFO, "speed: %.1f frames a second (60 is full speed), frame %u\n", SPEED_FRAMES / seconds,
+		    core->board->frame());
+		core->speed_frames = 1;
+		core->speed_since = now;
+	}
 }
 
 RETRO_API void
