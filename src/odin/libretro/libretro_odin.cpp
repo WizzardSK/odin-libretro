@@ -846,6 +846,9 @@ const retro_hw_render_context_negotiation_interface_vulkan vk_negotiation = {
 /* The picture of the frame (the renderer's image, vk::Context::picture)
  * copied into the image of the frontend's sync index, which the frontend
  * samples once the copy's semaphore is signalled */
+constexpr VkComponentMapping OPAQUE = { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+	                                VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_ONE };
+
 void
 present_vk(HostPicture picture)
 {
@@ -862,8 +865,10 @@ present_vk(HostPicture picture)
 	VkOutput &out = vk_outputs[index];
 	if (out.image.w != picture.w || out.image.h != picture.h) {
 		vk_card->destroy_image(out.image);
+		/* The picture's alpha is 0, and RetroArch blends the frame by it:
+		 * read as opaque through the view */
 		out.image = vk_card->make_image(VK_FORMAT_R8G8B8A8_UNORM, picture.w, picture.h, 1,
-		                                VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+		                                VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, OPAQUE);
 	}
 	if (!out.done) {
 		const VkSemaphoreCreateInfo info{ VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, nullptr, 0 };
@@ -904,8 +909,7 @@ present_vk(HostPicture picture)
 	image.create_info.image = out.image.image;
 	image.create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
 	image.create_info.format = VK_FORMAT_R8G8B8A8_UNORM;
-	image.create_info.components = { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
-		                         VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY };
+	image.create_info.components = OPAQUE;
 	image.create_info.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
 	vk_iface->set_image(vk_iface->handle, &image, 1, &out.done, vk_card->queue_family());
 	video_cb(RETRO_HW_FRAME_BUFFER_VALID, picture.w, picture.h, 0);
