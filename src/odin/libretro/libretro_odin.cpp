@@ -703,6 +703,7 @@ context_reset()
 void
 context_destroy()
 {
+	log(RETRO_LOG_INFO, "context destroyed\n");
 	if (!core)
 		return;
 	core->screen.renderer.reset();
@@ -720,6 +721,9 @@ vk_destroy_outputs()
 	if (!vk_card)
 		return;
 	vk_card->send_and_wait();
+	/* The frontend's frames still read these images on the card: they
+	 * go once the whole device is idle */
+	vk_card->fn().vkDeviceWaitIdle(vk_card->device());
 	for (VkOutput &out : vk_outputs) {
 		if (out.image.image)
 			vk_card->destroy_image(out.image);
@@ -828,6 +832,7 @@ vk_create_device(retro_vulkan_context *context, VkInstance instance, VkPhysicalD
 void
 vk_destroy_device()
 {
+	log(RETRO_LOG_INFO, "Vulkan: the device goes\n");
 	if (core)
 		core->screen.renderer.reset();
 	vk_destroy_outputs();
@@ -1186,9 +1191,13 @@ retro_unload_game(void)
 {
 	if (!core)
 		return;
+	log(RETRO_LOG_INFO, "content unloaded\n");
 	core->board_thread.stop();
 	if (core->board)
 		core->board->power_off();
+	/* The renderer's images may still be read by the frontend's frames */
+	if (api == Api::VULKAN && vk_card)
+		vk_card->fn().vkDeviceWaitIdle(vk_card->device());
 	core->screen.renderer.reset();
 	core.reset();
 }
