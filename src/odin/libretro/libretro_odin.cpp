@@ -29,6 +29,7 @@
 #include <mutex>
 #include <thread>
 #include <cstring>
+#include <span>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -51,6 +52,7 @@
 #include "odin/machine/boards/hikaru/hikaru.hpp"
 #include "odin/machine/boards/hikaru/hikaru_host.hpp"
 #include "odin/machine/core/state_file.hpp"
+#include "odin/machine/cabinet/drive_board.hpp"
 
 extern "C" const char odin_games_json[];
 
@@ -320,6 +322,91 @@ public:
 		m_coins[0] = m_coins[1] = false;
 	}
 
+	/* What RetroArch's Controls menu shows for each input: the name each
+	 * control has in the game's INPUT TEST (the game list), on the input of
+	 * its role */
+	void describe() const
+	{
+		struct Input {
+			unsigned port, device, index, id;
+			std::string name;
+		};
+		std::vector<Input> inputs;
+		const auto add = [&](unsigned port, unsigned device, unsigned index, unsigned id, const std::string &name) {
+			for (const Input &in : inputs)
+				if (in.port == port && in.device == device && in.index == index && in.id == id)
+					return;
+			inputs.push_back({ port, device, index, id, name });
+		};
+		const unsigned J = RETRO_DEVICE_JOYPAD, A = RETRO_DEVICE_ANALOG;
+		const unsigned L = RETRO_DEVICE_INDEX_ANALOG_LEFT, R = RETRO_DEVICE_INDEX_ANALOG_RIGHT;
+
+		for (const GameControl &control : m_controls) {
+			const unsigned port = control.player & 1;
+			const std::string &name = control.name;
+
+			if (control.type == GameControl::Type::POSITIONS) {
+				add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_L, name + " down");
+				add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_R, name + " up");
+				continue;
+			}
+			switch (control.role) {
+			case Role::START: add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_START, name); break;
+			case Role::SERVICE: add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_L3, name); break;
+			case Role::UP: add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_UP, name); break;
+			case Role::DOWN: add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, name); break;
+			case Role::LEFT: add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, name); break;
+			case Role::RIGHT: add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, name); break;
+			case Role::BUTTON1: add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_B, name); break;
+			case Role::BUTTON2: add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_A, name); break;
+			case Role::BUTTON3: add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_Y, name); break;
+			case Role::BUTTON4: add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_X, name); break;
+			case Role::BUTTON5: add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_L, name); break;
+			case Role::BUTTON6: add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_R, name); break;
+			case Role::BUTTON7: add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_L2, name); break;
+			case Role::BUTTON8: add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_R2, name); break;
+			case Role::GEAR_UP: add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_R, name); break;
+			case Role::GEAR_DOWN: add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_L, name); break;
+			case Role::ACCEL: add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_R2, name); break;
+			case Role::BRAKE: add(port, J, 0, RETRO_DEVICE_ID_JOYPAD_L2, name); break;
+			case Role::STICK_UP: case Role::STICK_DOWN: add(port, A, L, RETRO_DEVICE_ID_ANALOG_Y, name); break;
+			case Role::STICK_LEFT: case Role::STICK_RIGHT: add(port, A, L, RETRO_DEVICE_ID_ANALOG_X, name); break;
+			case Role::STICK2_UP: case Role::STICK2_DOWN: add(port, A, R, RETRO_DEVICE_ID_ANALOG_Y, name); break;
+			case Role::STICK2_LEFT: case Role::STICK2_RIGHT: add(port, A, R, RETRO_DEVICE_ID_ANALOG_X, name); break;
+			case Role::STEER: case Role::STICK_X: add(port, A, L, RETRO_DEVICE_ID_ANALOG_X, name); break;
+			case Role::STICK_Y: add(port, A, L, RETRO_DEVICE_ID_ANALOG_Y, name); break;
+			case Role::STICK2_X: add(port, A, R, RETRO_DEVICE_ID_ANALOG_X, name); break;
+			case Role::STICK2_Y: add(port, A, R, RETRO_DEVICE_ID_ANALOG_Y, name); break;
+			default: break;
+			}
+		}
+		add(0, J, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Coin 1");
+		add(1, J, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Coin 2");
+		add(0, J, 0, RETRO_DEVICE_ID_JOYPAD_R3, "Test");
+
+		static std::vector<std::string> names;
+		static std::vector<retro_input_descriptor> list;
+		names.clear();
+		list.clear();
+		names.reserve(inputs.size());
+		for (const Input &in : inputs)
+			names.push_back(in.name);
+		for (size_t i = 0; i < inputs.size(); i++)
+			list.push_back({ inputs[i].port, inputs[i].device, inputs[i].index, inputs[i].id, names[i].c_str() });
+		list.push_back({ 0, 0, 0, 0, nullptr });
+		environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, list.data());
+	}
+
+	/* The channel the steering wheel is read on, as last read; 8000 with
+	 * none */
+	uint16_t steer_channel() const
+	{
+		for (const GameControl &control : m_controls)
+			if (control.role == Role::STEER && control.type == GameControl::Type::ANALOG)
+				return m_inputs.jvs_analog[control.analog & 7];
+		return 0x8000;
+	}
+
 	/* Read once a retro_run, after input_poll */
 	void poll()
 	{
@@ -536,6 +623,15 @@ struct Core {
 	std::string system_dir, save_dir;
 	bool context_ready = false;
 	std::vector<int16_t> mixed;
+	/* Rumble (core option): the frontend's interface, and what each pad
+	 * was last told; the desktop's shakes (Controls::show) */
+	retro_set_rumble_state_t set_rumble = nullptr;
+	bool rumble = true;
+	uint16_t felt_level = 0, drive_level = 0, wheel_was = 0x8000;
+	int force_was = 0;
+	std::array<double, 8> wheel_moves{};
+	unsigned wheel_move = 0;
+	uint16_t rumbling[2] = {};
 	BoardThread board_thread;
 	/* Threaded Board: a frame of the board is done and not drawn yet */
 	bool threaded = true, frame_pending = false;
@@ -570,6 +666,10 @@ retro_core_option_definition option_defs[] = {
 	  "The board runs the next frame on a thread of its own while the frame before is drawn, as the desktop Odin does: faster on most machines, one frame more of latency. Off: each frame is run and drawn in turn.",
 	  { { "enabled", "Enabled" }, { "disabled", "Disabled" }, { nullptr, nullptr } },
 	  "enabled" },
+	{ "odin_rumble", "Rumble",
+	  "The pads shake as the cabinet does: its rumble outputs, the vibration device the optional sound board drives (Star Wars Racer Arcade) and the shocks of the steering wheel (NASCAR Arcade), as the desktop Odin shakes a gamepad.",
+	  { { "enabled", "Enabled" }, { "disabled", "Disabled" }, { nullptr, nullptr } },
+	  "enabled" },
 	{ "odin_anisotropy", "Anisotropic Filtering",
 	  "Of the texture filter; Off as on the board.",
 	  { { "1", "Off" }, { "2", "2x" }, { "4", "4x" }, { "8", "8x" }, { "16", "16x" }, { nullptr, nullptr } },
@@ -592,6 +692,8 @@ read_options(Core &c)
 		c.scale = std::clamp<unsigned>(static_cast<unsigned>(std::atoi(v)), 1, MOST_SCALE);
 	if (const char *v = option_value("odin_anisotropy"))
 		c.anisotropy = std::clamp<unsigned>(static_cast<unsigned>(std::atoi(v)), 1, 16);
+	if (const char *v = option_value("odin_rumble"))
+		c.rumble = std::strcmp(v, "disabled") != 0;
 	if (const char *v = option_value("odin_upscale_mode"))
 		c.upscale_mode = !std::strcmp(v, "native") ? DisplayUpscaleMode::NATIVE :
 		                 !std::strcmp(v, "raw")    ? DisplayUpscaleMode::RAW :
@@ -972,6 +1074,75 @@ present(HostPicture picture)
 /* The sound of the frame: the main board's, with the optional board's in the
  * mix at the level of the list where the cabinet has speakers for it (the
  * desktop's -o mix); 44 100 pairs a second */
+/* How hard the optional board's sound would shake a vibration device, 0 to
+ * 0xFFFF, and a level smoothed over the frames (AudioOut::shake_of,
+ * AudioOut::smoothed, which come with the desktop's sound) */
+uint16_t
+shake_of(std::span<const int16_t> stereo)
+{
+	const size_t frames = stereo.size() / 2;
+	double sum = 0;
+
+	for (size_t i = 0; i < frames; i++) {
+		const double both = (stereo[2 * i] + stereo[2 * i + 1]) / 2.0;
+		sum += both * both;
+	}
+	const double level = frames ? std::sqrt(sum / static_cast<double>(frames)) / 32768.0 : 0;
+
+	return level < 1.0 / 32 ? 0 : static_cast<uint16_t>(std::lround(std::min(1.0, level * 2) * 0xFFFF));
+}
+
+uint16_t
+smoothed(uint16_t was, uint16_t now)
+{
+	return static_cast<uint16_t>((3 * was + now) / 4);
+}
+
+/* The pads shaken by the frame's outputs, as Controls::show shakes the
+ * desktop's gamepads: a rumble output of a player at 0xC000, and player 1's
+ * pad also as the vibration device the optional board's sound drives and
+ * the jolts of the drive board's wheel */
+void
+shake_pads()
+{
+	constexpr uint16_t RUMBLE = 0xC000, FELT_STEP = 0x1000;
+	Core &c = *core;
+
+	if (!c.set_rumble)
+		return;
+	uint16_t strength[2] = {};
+	if (c.rumble) {
+		const std::span<const uint8_t> outputs = c.board->io_outputs();
+		const Game &game = *c.game;
+		const bool still = any_on(game.outputs, GameOutput::Role::MUTE, outputs);
+
+		c.felt_level = game.option_vibration && !still ? smoothed(c.felt_level, shake_of(c.board->sound(true))) : 0;
+		const int force = game.drive_first_output ?
+		                          DriveBoard::force_of(DriveBoard::command(outputs, game.drive_first_output)) :
+		                          0;
+		const uint16_t wheel = c.panel.steer_channel();
+		c.wheel_moves[c.wheel_move++ % c.wheel_moves.size()] = std::abs(wheel - c.wheel_was) / 65535.0;
+		c.wheel_was = wheel;
+		const double moved = *std::max_element(c.wheel_moves.begin(), c.wheel_moves.end());
+		const uint16_t jolt = DriveBoard::jolt_of(force - c.force_was, moved);
+		c.force_was = force;
+		c.drive_level = std::max(jolt, smoothed(c.drive_level, jolt));
+		const uint16_t felt = static_cast<uint16_t>(std::max(c.felt_level, c.drive_level) / FELT_STEP * FELT_STEP);
+
+		for (unsigned player = 0; player < 2; player++) {
+			const bool on = any_on(game.outputs, GameOutput::Role::RUMBLE, outputs, static_cast<int>(player));
+			strength[player] = std::max<uint16_t>(on ? RUMBLE : 0, player ? 0 : felt);
+		}
+	}
+	for (unsigned player = 0; player < 2; player++) {
+		if (strength[player] == c.rumbling[player])
+			continue;
+		c.set_rumble(player, RETRO_RUMBLE_STRONG, strength[player]);
+		c.set_rumble(player, RETRO_RUMBLE_WEAK, strength[player]);
+		c.rumbling[player] = strength[player];
+	}
+}
+
 void
 play_sound()
 {
@@ -1185,6 +1356,10 @@ retro_load_game(const retro_game_info *info)
 		return false;
 	}
 	core->panel.set_game(*core->game);
+	core->panel.describe();
+	retro_rumble_interface rumble{};
+	if (environ_cb(RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE, &rumble))
+		core->set_rumble = rumble.set_rumble_state;
 	core->board->set_screen(&core->screen);
 	core->board->set_panel(&core->panel);
 	/* saves/odin/<game>; saves/Odin/<game> where the frontend already keeps
@@ -1212,6 +1387,11 @@ retro_unload_game(void)
 	if (!core)
 		return;
 	log(RETRO_LOG_INFO, "content unloaded\n");
+	for (unsigned player = 0; player < 2; player++)
+		if (core->set_rumble && core->rumbling[player]) {
+			core->set_rumble(player, RETRO_RUMBLE_STRONG, 0);
+			core->set_rumble(player, RETRO_RUMBLE_WEAK, 0);
+		}
 	core->board_thread.stop();
 	if (core->board)
 		core->board->power_off();
@@ -1276,6 +1456,7 @@ retro_run(void)
 		draw();
 		present(renderer.frame_picture());
 		play_sound();
+		shake_pads();
 	} else {
 		/* The frame the thread ran is taken with the board at rest, its
 		 * sound handed over before the next frame clears it; then the
@@ -1286,6 +1467,7 @@ retro_run(void)
 		if (pending) {
 			renderer.take_frame(core->board->frame(), Renderer::WIDTH, Renderer::HEIGHT);
 			play_sound();
+			shake_pads();
 		}
 		core->screen.set_drawing(pending);
 		renderer.begin_frame();

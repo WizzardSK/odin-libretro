@@ -26,7 +26,7 @@ The core is `build/odin_libretro.so` (`.dll` on Windows); `odin_libretro.info` g
 
 ## Controls
 
-The controls of each game come from its list (`odin-games.json`), by their roles:
+The controls of each game come from its list (`odin-games.json`), by their roles; RetroArch's Controls menu shows each input with the name the game's INPUT TEST gives it:
 
 | Role | RetroPad |
 |---|---|
@@ -48,8 +48,9 @@ The controls of each game come from its list (`odin-games.json`), by their roles
 - **Internal Resolution**: 1x (640x480) to 6x (3840x2880), on the fly.
 - **HUD at Higher Resolutions**: Snap (default), Native or Raw.
 - **Threaded Board** (Restart): Enabled (default), the board runs the next frame on a thread of its own while the frame before is drawn, as the desktop Odin does; faster, one frame more of latency. Disabled: each frame run and drawn in turn.
+- **Rumble**: Enabled (default), the pads shake as the cabinet does: its rumble outputs, the vibration device the optional sound board drives (Star Wars Racer Arcade) and the jolts of the steering wheel (NASCAR Arcade).
 - **Anisotropic Filtering**: Off (default) to 16x.
 
 ## Not there yet
 
-A macOS build, network links between cabinets, force feedback.
+A macOS build, network links between cabinets, force feedback on a wheel.
