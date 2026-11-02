@@ -1,0 +1,52 @@
+name: Buildbot preflight
+
+# Replays .gitlab-ci.yml's jobs where the buildbot's registry cannot be reached
+# from: each job's own before_script and script, as they stand in
+# .gitlab-ci.yml, in a container of the image the job names (Ubuntu 22.04 for
+# Linux, on an x86 runner and an ARM one, Ubuntu 24.04 for Windows).
+on:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - job: libretro-build-linux-x64
+            runner: ubuntu-24.04
+          - job: libretro-build-linux-aarch64
+            runner: ubuntu-24.04-arm
+    name: ${{ matrix.job }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Job script in Ubuntu 22.04
+        run: |
+          python3 .github/workflows/replay.py ${{ matrix.job }} > job.sh
+          cat job.sh
+          docker run --rm -v "$PWD":/src -w /src ubuntu:22.04 bash job.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.job }}
+          path: odin_libretro.so
+
+  windows-x64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Job script in Ubuntu 24.04
+        run: |
+          python3 .github/workflows/replay.py libretro-build-windows-x64 > job.sh
+          cat job.sh
+          docker run --rm -v "$PWD":/src -w /src ubuntu:24.04 bash job.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libretro-build-windows-x64
+          path: odin_libretro.dll
