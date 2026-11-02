@@ -39,6 +39,26 @@
 #include <vector>
 
 #include "libretro.h"
+
+/* Multi-channel sound (RetroArch's libretro.h, experimental; newer than the
+ * copy here) */
+#ifndef RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_MULTI
+#define RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_MULTI (94 | RETRO_ENVIRONMENT_EXPERIMENTAL)
+typedef size_t(RETRO_CALLCONV *retro_audio_sample_batch_multi_int16_t)(const int16_t *data, size_t frames,
+                                                                        unsigned channels, unsigned layout);
+typedef size_t(RETRO_CALLCONV *retro_audio_sample_batch_multi_float_t)(const float *data, size_t frames,
+                                                                        unsigned channels, unsigned layout);
+struct retro_audio_sample_multi_callback {
+	retro_audio_sample_batch_multi_int16_t batch_int16;
+	retro_audio_sample_batch_multi_float_t batch_float;
+};
+#define RETRO_AUDIO_SPEAKER_FRONT_LEFT 0x001
+#define RETRO_AUDIO_SPEAKER_FRONT_RIGHT 0x002
+#define RETRO_AUDIO_SPEAKER_BACK_LEFT 0x010
+#define RETRO_AUDIO_SPEAKER_BACK_RIGHT 0x020
+#define RETRO_AUDIO_LAYOUT_STEREO (RETRO_AUDIO_SPEAKER_FRONT_LEFT | RETRO_AUDIO_SPEAKER_FRONT_RIGHT)
+#define RETRO_AUDIO_LAYOUT_QUAD (RETRO_AUDIO_LAYOUT_STEREO | RETRO_AUDIO_SPEAKER_BACK_LEFT | RETRO_AUDIO_SPEAKER_BACK_RIGHT)
+#endif
 #include <GL/osmesa.h>
 #include "odin/host/gfx/vk_common.hpp"
 #include "libretro_vulkan.h"
@@ -759,25 +779,25 @@ retro_core_option_definition option_defs[] = {
 	  { { "enabled", "Enabled" }, { "disabled", "Disabled" }, { nullptr, nullptr } },
 	  "enabled" },
 	{ "odin_pharrier_sound_mode", "Sound Mode",
-	  "Planet Harriers has an optional sound board: Main, the main board alone; Both, the two mixed, the optional one at Optional Board Level; Optional Only, the optional board alone. The desktop's Quad gives each board two speakers of its own, which RetroArch's stereo has not.",
-	  { { "main", "Main" }, { "mix", "Both" }, { "option", "Optional Only" }, { nullptr, nullptr } },
+	  "Planet Harriers has an optional sound board: Main, the main board alone; Both, the two mixed, the optional one at Optional Board Level; Quad, as the desktop's, four channels: the main board in the front speakers, the optional one in the rear (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both at 0 dB); Optional Only, the optional board alone.",
+	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "Quad" }, { "option", "Optional Only" }, { nullptr, nullptr } },
 	  "mix" },
 	{ "odin_pharrier_option_level", "Optional Board Level",
 	  "The optional sound board of Planet Harriers against the main one, with Sound Mode Both.",
 	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
 	  "0" },
 	{ "odin_swracer_sound_mode", "Sound Mode",
-	  "Star Wars Racer Arcade has an optional sound board: Main, the main board alone; Both, the two mixed, the optional one at Optional Board Level; Optional Only, the optional board alone. The desktop's Quad gives each board two speakers of its own, which RetroArch's stereo has not.",
-	  { { "main", "Main" }, { "mix", "Both" }, { "option", "Optional Only" }, { nullptr, nullptr } },
+	  "Star Wars Racer Arcade has an optional sound board: Main, the main board alone; Both, the two mixed, the optional one at Optional Board Level; Quad, as the desktop's, four channels: the main board in the front speakers, the optional one in the rear (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both at 0 dB); Optional Only, the optional board alone.",
+	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "Quad" }, { "option", "Optional Only" }, { nullptr, nullptr } },
 	  "mix" },
 	{ "odin_swracer_option_level", "Optional Board Level",
 	  "The optional sound board of Star Wars Racer Arcade against the main one, with Sound Mode Both.",
 	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
 	  "0" },
 	{ "odin_sgnascar_sound_mode", "Sound Mode",
-	  "NASCAR Arcade has an optional sound board: Main, the main board alone; Both, the two mixed, the optional one at Optional Board Level; Optional Only, the optional board alone. The desktop's Quad gives each board two speakers of its own, which RetroArch's stereo has not.",
-	  { { "main", "Main" }, { "mix", "Both" }, { "option", "Optional Only" }, { nullptr, nullptr } },
-	  "main" },
+	  "NASCAR Arcade has an optional sound board: Main, the main board alone; Both, the two mixed, the optional one at Optional Board Level; Quad, as the desktop's, four channels: the main board in the front speakers, the optional one in the rear (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both at 0 dB); Optional Only, the optional board alone.",
+	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "Quad" }, { "option", "Optional Only" }, { nullptr, nullptr } },
+	  "mix" },
 	{ "odin_sgnascar_option_level", "Optional Board Level",
 	  "The optional sound board of NASCAR Arcade against the main one, with Sound Mode Both.",
 	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
@@ -1365,6 +1385,21 @@ shake_pads()
 std::mutex audio_mutex;
 std::vector<int16_t> audio_buffer;
 constexpr size_t AUDIO_MOST = 44100;
+/* The frontend's multi-channel entry points (GET_AUDIO_SAMPLE_BATCH_MULTI),
+ * for the games with an optional board: then all their sound goes through
+ * them, two or four channels; and the channels of what audio_buffer holds */
+retro_audio_sample_multi_callback audio_multi{};
+unsigned audio_channels = 2;
+
+/* Frames to the frontend: through the multi-channel call when the game has it */
+size_t
+send_frames(const int16_t *data, size_t frames, unsigned channels)
+{
+	if (audio_multi.batch_int16)
+		return audio_multi.batch_int16(data, frames, channels,
+		                               channels == 4 ? RETRO_AUDIO_LAYOUT_QUAD : RETRO_AUDIO_LAYOUT_STEREO);
+	return audio_batch_cb ? audio_batch_cb(data, frames) : 0;
+}
 
 /* The sound of the frame, as the desktop's AudioOut::interleave makes it:
  * the main board, the optional one, or both mixed with the optional board at
@@ -1381,33 +1416,47 @@ play_sound()
 	const int32_t gain = static_cast<int32_t>(std::lround(32768 * std::pow(10.0, level / 20.0)));
 	const auto at = [](const std::vector<int16_t> &v, size_t i) { return i < v.size() ? v[i] : int16_t{ 0 }; };
 
+	/* Quad: four channels where the frontend takes them, else Both at 0 dB */
+	const bool quad = mode == "quad" && audio_multi.batch_int16;
+	const unsigned channels = quad ? 4 : 2;
+	const int32_t mix_gain = mode == "quad" ? 32768 : gain;
+
 	out.clear();
+	if (quad) {
+		for (size_t i = 0; i + 1 < main.size(); i += 2)
+			out.insert(out.end(), { main[i], main[i + 1], at(option, i), at(option, i + 1) });
+	} else
 	for (size_t i = 0; i < main.size(); i++) {
 		const int16_t m = main[i], o = at(option, i);
 		if (mode == "option")
 			out.push_back(o);
-		else if (mode == "mix")
+		else if (mode == "mix" || mode == "quad")
 			out.push_back(static_cast<int16_t>(
-				std::clamp<int64_t>(m + ((static_cast<int64_t>(o) * gain) >> 15), -0x8000, 0x7FFF)));
+				std::clamp<int64_t>(m + ((static_cast<int64_t>(o) * mix_gain) >> 15), -0x8000, 0x7FFF)));
 		else
 			out.push_back(m);
 	}
-	out.resize(out.size() & ~size_t{ 1 });
+	out.resize(out.size() - out.size() % channels);
 
 	if (core->audio_thread) {
 		std::lock_guard lock(audio_mutex);
+		/* Another channel count (Sound Mode changed): what was kept is dropped */
+		if (audio_channels != channels) {
+			audio_buffer.clear();
+			audio_channels = channels;
+		}
 		audio_buffer.insert(audio_buffer.end(), out.begin(), out.end());
-		if (audio_buffer.size() > 2 * AUDIO_MOST)
-			audio_buffer.erase(audio_buffer.begin(), audio_buffer.end() - 2 * AUDIO_MOST);
+		if (audio_buffer.size() > channels * AUDIO_MOST)
+			audio_buffer.erase(audio_buffer.begin(), audio_buffer.end() - channels * AUDIO_MOST);
 		return;
 	}
-	for (size_t done = 0; done + 1 < out.size();) {
-		const size_t frames = (out.size() - done) / 2;
-		const size_t taken = audio_batch_cb(out.data() + done, frames);
+	for (size_t done = 0; done + channels <= out.size();) {
+		const size_t frames = (out.size() - done) / channels;
+		const size_t taken = send_frames(out.data() + done, frames, channels);
 
 		if (!taken)
 			break;
-		done += taken * 2;
+		done += taken * channels;
 	}
 }
 
@@ -1416,17 +1465,19 @@ play_sound()
 void
 audio_thread_callback()
 {
-	int16_t chunk[1024 * 2];
+	int16_t chunk[1024 * 4];
 	size_t frames = 0;
+	unsigned channels = 2;
 
 	{
 		std::lock_guard lock(audio_mutex);
-		frames = std::min<size_t>(audio_buffer.size() / 2, 1024);
-		std::copy_n(audio_buffer.begin(), frames * 2, chunk);
-		audio_buffer.erase(audio_buffer.begin(), audio_buffer.begin() + static_cast<std::ptrdiff_t>(frames * 2));
+		channels = audio_channels;
+		frames = std::min<size_t>(audio_buffer.size() / channels, 1024);
+		std::copy_n(audio_buffer.begin(), frames * channels, chunk);
+		audio_buffer.erase(audio_buffer.begin(), audio_buffer.begin() + static_cast<std::ptrdiff_t>(frames * channels));
 	}
-	if (frames && audio_batch_cb)
-		audio_batch_cb(chunk, frames);
+	if (frames)
+		send_frames(chunk, frames, channels);
 	else
 		std::this_thread::sleep_for(std::chrono::milliseconds(2));
 }
@@ -1647,6 +1698,14 @@ retro_load_game(const retro_game_info *info)
 	}
 	core->panel.set_game(*core->game);
 	core->panel.describe();
+	/* Multi-channel sound for the games with an optional board (Quad),
+	 * negotiated once at the load */
+	audio_multi = {};
+	if (sound_game(core->game->name) &&
+	    !environ_cb(RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_MULTI, &audio_multi))
+		audio_multi = {};
+	log(RETRO_LOG_INFO, "sound: multi-channel %s\n", audio_multi.batch_int16 ? "taken (Quad has four channels)" :
+	                                                                         "not offered (Quad is Both at 0 dB)");
 	{
 		const char *v = option_value("odin_audio_thread");
 		const retro_audio_callback callback{ audio_thread_callback, audio_thread_state };
@@ -1654,6 +1713,7 @@ retro_load_game(const retro_game_info *info)
 		                     environ_cb(RETRO_ENVIRONMENT_SET_AUDIO_CALLBACK, const_cast<retro_audio_callback *>(&callback));
 		std::lock_guard lock(audio_mutex);
 		audio_buffer.clear();
+		audio_channels = 2;
 		if (core->audio_thread)
 			log(RETRO_LOG_INFO, "sound: on RetroArch's audio thread\n");
 	}
@@ -1688,6 +1748,7 @@ retro_unload_game(void)
 		return;
 	log(RETRO_LOG_INFO, "content unloaded\n");
 	show_sound_options(nullptr);
+	audio_multi = {};
 	for (unsigned player = 0; player < 2; player++)
 		if (core->set_rumble && core->rumbling[player]) {
 			core->set_rumble(player, RETRO_RUMBLE_STRONG, 0);
