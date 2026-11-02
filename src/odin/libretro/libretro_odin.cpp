@@ -877,13 +877,16 @@ present_vk(HostPicture picture)
 	}
 
 	const VkCommandBuffer cb = vk_card->commands();
-	const VkImageCopy region{ { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 }, { 0, 0, 0 }, { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
-		                  { 0, 0, 0 }, { picture.w, picture.h, 1 } };
+	/* Its lines turned over: the picture has the bottom one first, as
+	 * OpenGL counts them (VkDrawing::present does the same for the window) */
+	const int32_t w = static_cast<int32_t>(picture.w), h = static_cast<int32_t>(picture.h);
+	const VkImageBlit region{ { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 }, { { 0, 0, 0 }, { w, h, 1 } },
+		                  { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 }, { { 0, h, 0 }, { w, 0, 1 } } };
 
 	vk_card->barrier(cb, *from, vk::COPIED_FROM);
 	vk_card->barrier(cb, out.image, vk::COPIED_TO);
-	vk_card->fn().vkCmdCopyImage(cb, from->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, out.image.image,
-	                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+	vk_card->fn().vkCmdBlitImage(cb, from->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, out.image.image,
+	                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_NEAREST);
 	vk_card->barrier(cb, out.image, vk::SAMPLED);
 	/* Sent before the frontend's frame on the same queue, which the
 	 * barrier above orders the frontend's read of the image after, as the
