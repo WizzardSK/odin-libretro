@@ -4,7 +4,11 @@ The libretro core of [Odin](https://github.com/Tovarichtch/Odin), the SEGA Hikar
 
 Odin's own README is in [README](README), how to build and run the desktop program in [INSTALL](INSTALL).
 
-Downloads: the cores for Linux x86_64 and aarch64 and Windows x86_64, with `odin_libretro.info`, are in the [releases](https://github.com/WizzardSK/odin-libretro/releases). The Linux aarch64 core is tested in RetroArch with both renderers (Planet Harriers at full speed with Threaded Board); the others are built but not tried yet. Reports go to the odin-libretro thread in #support-forum on the libretro Discord, or to this repository's issues.
+## Installing
+
+The core is on its way to the libretro buildbot (Linux x86_64 and aarch64, Windows x64; the recipe is `.gitlab-ci.yml`). Once it is there: in RetroArch, Main Menu > Online Updater > Core Downloader > Odin; until its core info is part of RetroArch's (libretro/libretro-super#2183), also put [`odin_libretro.info`](odin_libretro.info) in RetroArch's `info/` folder. Or by hand from the [buildbot's nightlies](https://buildbot.libretro.com/nightly/): `linux/x86_64/latest/odin_libretro.so.zip`, `windows/x86_64/latest/odin_libretro.dll.zip`, unzipped into RetroArch's `cores/`.
+
+Until then, the cores are the artifacts of this repository's [CI runs](https://github.com/WizzardSK/odin-libretro/actions/workflows/libretro.yml) on the `libretro` branch (signed in to GitHub). The Linux aarch64 core is tested in RetroArch with both renderers (Planet Harriers at full speed with Threaded Board); Windows testers run the Windows one. Reports go to the Odin thread in #support-forum on the libretro Discord, or to this repository's issues.
 
 ## Building
 
