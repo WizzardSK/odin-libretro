@@ -28,6 +28,7 @@
 #include <condition_variable>
 #include <mutex>
 #include <thread>
+#include <functional>
 #include <cstring>
 #include <span>
 #include <filesystem>
@@ -73,10 +74,14 @@ struct retro_audio_sample_multi_callback {
 #include "odin/machine/boards/hikaru/hikaru_host.hpp"
 #include "odin/machine/core/state_file.hpp"
 #include "odin/machine/cabinet/drive_board.hpp"
+#include "odin/host/audio/audio_out.hpp"
+#include "odin/host/renderer/hikaru/renderer_programs.hpp"
+#include "gaelco_run.hpp"
 
 extern "C" const char odin_games_json[];
 extern "C" const char odin_shaders_airtrix[], odin_shaders_braveff[], odin_shaders_pharrier[], odin_shaders_sgnascar[],
-	odin_shaders_swracer[], odin_shaders_von4[];
+	odin_shaders_swracer[], odin_shaders_von4[], odin_shaders_atvtrack[], odin_shaders_gfootbal[],
+	odin_shaders_smashdrv[];
 
 namespace fs = std::filesystem;
 using namespace odin;
@@ -262,7 +267,12 @@ public:
 
 	void start(Hikaru &board)
 	{
-		m_board = &board;
+		start([&board] { board.run_frame(); });
+	}
+	/* Any frame's work: a Gaelco board's, with its controls (GaelcoRun) */
+	void start(std::function<void()> step)
+	{
+		m_step = std::move(step);
 		m_quit = false;
 		m_thread = std::thread([this] { loop(); });
 	}
@@ -305,14 +315,14 @@ private:
 				return;
 			m_go = false;
 			lock.unlock();
-			m_board->run_frame();
+			m_step();
 			lock.lock();
 			m_busy = false;
 			m_cv.notify_all();
 		}
 	}
 
-	Hikaru *m_board = nullptr;
+	std::function<void()> m_step;
 	std::thread m_thread;
 	std::mutex m_mutex;
 	std::condition_variable m_cv;
@@ -585,9 +595,27 @@ private:
 	static bool pad_pressed(const GameControl &control, unsigned player)
 	{
 		for (const std::string &input : control.pad)
-			if (retropad_of(input) >= 0 && pad(player, static_cast<unsigned>(retropad_of(input))))
+			if (retropad_of(input) >= 0 ? pad(player, static_cast<unsigned>(retropad_of(input))) :
+			                              half_axis(input, player))
 				return true;
 		return false;
+	}
+	/* Half of a stick as the list names it, "-lefty" (up) or "+rightx":
+	 * pushed past half its way */
+	static bool half_axis(const std::string &input, unsigned player)
+	{
+		if (input.size() < 6 || (input[0] != '-' && input[0] != '+'))
+			return false;
+		const std::string axis_name = input.substr(1);
+		const bool left = axis_name.rfind("left", 0) == 0, right = axis_name.rfind("right", 0) == 0;
+
+		if (!left && !right)
+			return false;
+		const char last = axis_name.back();
+		if (last != 'x' && last != 'y')
+			return false;
+		return stick(player, left ? RETRO_DEVICE_INDEX_ANALOG_LEFT : RETRO_DEVICE_INDEX_ANALOG_RIGHT, last == 'y',
+		             input[0] == '+');
 	}
 	static bool pad(unsigned player, unsigned id)
 	{
@@ -718,6 +746,23 @@ struct Core {
 	GameList games;
 	std::optional<Game> game;
 	std::unique_ptr<Hikaru> board;
+	/* A Gaelco board in place of the Hikaru (gaelco_run.hpp), and what
+	 * draws its Neon 250's scenes, as the desktop's Display::attach_scenes */
+	std::unique_ptr<GaelcoRun> gaelco;
+	std::unique_ptr<Drawing> own;
+	unsigned own_scale = 1;
+	PmxScene scene;
+	bool scene_fresh = false, blanked = false;
+	/* The controls and look the board's next frame runs with (taken on the
+	 * frontend's thread, run on the board's) */
+	CabinetInputs gaelco_in{};
+	unsigned gaelco_fine = 1, gaelco_flat = 0;
+	bool gaelco_sorts = false;
+	/* Its sound: the woofer's lows (AudioOut::woofer_pairs) */
+	LowPass woofer_low;
+	std::vector<int16_t> woofer_pairs;
+	double woofer_hz = 0;
+	unsigned start_volume = 3;	/* of START_VOLUMES: 75 */
 	LibretroScreen screen;
 	LibretroPanel panel;
 	LibretroGraphics graphics;
@@ -802,6 +847,46 @@ retro_core_option_definition option_defs[] = {
 	  "The optional sound board of NASCAR Arcade against the main one, with Sound Mode Both or 4.0: -24 dB to 0 dB (its engines are loud).",
 	  { { "-24", "-24 dB" }, { "-23", "-23 dB" }, { "-22", "-22 dB" }, { "-21", "-21 dB" }, { "-20", "-20 dB" }, { "-19", "-19 dB" }, { "-18", "-18 dB" }, { "-17", "-17 dB" }, { "-16", "-16 dB" }, { "-15", "-15 dB" }, { "-14", "-14 dB" }, { "-13", "-13 dB" }, { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { nullptr, nullptr } },
 	  "-12" },
+	{ "odin_atvtrack_sound_mode", "Sound Mode",
+	  "ATV Track has a woofer, fed by the board's second pair of channels: Main, the speakers alone; Both, the woofer's lows mixed in at Woofer Level, as the desktop plays it; 4.0, four channels, the speakers in front and the woofer's channel in the rear (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both); Woofer Only, the woofer's channel alone.",
+	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "4.0" }, { "option", "Woofer Only" }, { nullptr, nullptr } },
+	  "mix" },
+	{ "odin_atvtrack_option_level", "Woofer Level",
+	  "The woofer of ATV Track against the speakers, with Sound Mode Both or 4.0.",
+	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
+	  "0" },
+	{ "odin_atvtrack_woofer_cutoff", "Woofer Cutoff",
+	  "The lows of the woofer's channel mixed in with Sound Mode Both: below that many Hz, or all of it (Off).",
+	  { { "80", "80 Hz" }, { "120", "120 Hz" }, { "160", "160 Hz" }, { "200", "200 Hz" }, { "off", "Off" }, { nullptr, nullptr } },
+	  "120" },
+	{ "odin_gfootbal_sound_mode", "Sound Mode",
+	  "Gaelco Football has a woofer, fed by the board's second pair of channels: Main, the speakers alone; Both, the woofer's lows mixed in at Woofer Level, as the desktop plays it; 4.0, four channels, the speakers in front and the woofer's channel in the rear (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both); Woofer Only, the woofer's channel alone.",
+	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "4.0" }, { "option", "Woofer Only" }, { nullptr, nullptr } },
+	  "mix" },
+	{ "odin_gfootbal_option_level", "Woofer Level",
+	  "The woofer of Gaelco Football against the speakers, with Sound Mode Both or 4.0.",
+	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
+	  "0" },
+	{ "odin_gfootbal_woofer_cutoff", "Woofer Cutoff",
+	  "The lows of the woofer's channel mixed in with Sound Mode Both: below that many Hz, or all of it (Off).",
+	  { { "80", "80 Hz" }, { "120", "120 Hz" }, { "160", "160 Hz" }, { "200", "200 Hz" }, { "off", "Off" }, { nullptr, nullptr } },
+	  "120" },
+	{ "odin_smashdrv_sound_mode", "Sound Mode",
+	  "Smashing Drive has a woofer, fed by the board's second pair of channels: Main, the speakers alone; Both, the woofer's lows mixed in at Woofer Level, as the desktop plays it; 4.0, four channels, the speakers in front and the woofer's channel in the rear (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both); Woofer Only, the woofer's channel alone.",
+	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "4.0" }, { "option", "Woofer Only" }, { nullptr, nullptr } },
+	  "mix" },
+	{ "odin_smashdrv_option_level", "Woofer Level",
+	  "The woofer of Smashing Drive against the speakers, with Sound Mode Both or 4.0.",
+	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
+	  "0" },
+	{ "odin_smashdrv_woofer_cutoff", "Woofer Cutoff",
+	  "The lows of the woofer's channel mixed in with Sound Mode Both: below that many Hz, or all of it (Off).",
+	  { { "80", "80 Hz" }, { "120", "120 Hz" }, { "160", "160 Hz" }, { "200", "200 Hz" }, { "off", "Off" }, { nullptr, nullptr } },
+	  "120" },
+	{ "odin_smashdrv_start_volume", "Start Volume",
+	  "The volume Smashing Drive is set to at each power-on, as an operator would with VOLUME - and VOLUME + (the board keeps none of its own at first).",
+	  { { "0", "0" }, { "25", "25" }, { "50", "50" }, { "75", "75" }, { "96", "96" }, { nullptr, nullptr } },
+	  "75" },
 	{ "odin_anisotropy", "Anisotropic Filtering",
 	  "Of the texture filter; Off as on the board.",
 	  { { "1", "Off" }, { "2", "2x" }, { "4", "4x" }, { "8", "8x" }, { "16", "16x" }, { nullptr, nullptr } },
@@ -816,7 +901,17 @@ retro_core_option_definition option_defs[] = {
 /* The games with an optional sound board, whose Sound Mode and Optional
  * Board Level the options have; NASCAR Arcade (original) takes those of
  * NASCAR Arcade */
-const char *const SOUND_GAMES[] = { "pharrier", "swracer", "sgnascar" };
+const char *const SOUND_GAMES[] = { "pharrier", "swracer", "sgnascar", "atvtrack", "gfootbal", "smashdrv" };
+
+/* Smashing Drive's volumes at power-on, as the desktop's (options.hpp) */
+const char *const START_VOLUMES[] = { "0", "25", "50", "75", "96" };
+
+/* The Gaelco boards' games: a woofer in place of an optional board */
+bool
+gaelco_game(const char *g)
+{
+	return g && (!std::strcmp(g, "atvtrack") || !std::strcmp(g, "gfootbal") || !std::strcmp(g, "smashdrv"));
+}
 
 const char *
 sound_game(const std::string &name)
@@ -833,7 +928,11 @@ void
 show_sound_options(const char *shown)
 {
 	for (const char *g : SOUND_GAMES)
-		for (const char *what : { "_sound_mode", "_option_level" }) {
+		for (const char *what : { "_sound_mode", "_option_level", "_woofer_cutoff", "_start_volume" }) {
+			if (!std::strcmp(what, "_woofer_cutoff") && !gaelco_game(g))
+				continue;
+			if (!std::strcmp(what, "_start_volume") && std::strcmp(g, "smashdrv"))
+				continue;
 			const std::string key = std::string("odin_") + g + what;
 			retro_core_option_display display{ key.c_str(), shown && !std::strcmp(shown, g) };
 
@@ -866,6 +965,20 @@ read_options(Core &c)
 			c.sound_mode = v;
 		if (const char *v = option_value((prefix + "_option_level").c_str()))
 			c.option_level = std::atof(v);
+		if (gaelco_game(g)) {
+			const char *v = option_value((prefix + "_woofer_cutoff").c_str());
+			const double hz = v && std::strcmp(v, "off") ? std::atof(v) : (v ? 0.0 : 120.0);
+
+			if (hz != c.woofer_hz) {
+				c.woofer_hz = hz;
+				c.woofer_low = LowPass(hz, static_cast<int>(AtvTrack::DAC_RATE));
+			}
+		}
+		if (!std::strcmp(g, "smashdrv"))
+			if (const char *v = option_value("odin_smashdrv_start_volume"))
+				for (unsigned i = 0; i < std::size(START_VOLUMES); i++)
+					if (!std::strcmp(v, START_VOLUMES[i]))
+						c.start_volume = i;
 	}
 	if (const char *v = option_value("odin_rumble"))
 		c.rumble = std::strcmp(v, "disabled") != 0;
@@ -932,7 +1045,9 @@ program_lists(const std::string &game, Renderer::Options &looks)
 		const char *text;
 	} seeds[] = { { "airtrix", odin_shaders_airtrix },   { "braveff", odin_shaders_braveff },
 		      { "pharrier", odin_shaders_pharrier }, { "sgnascar", odin_shaders_sgnascar },
-		      { "swracer", odin_shaders_swracer },   { "von4", odin_shaders_von4 } };
+		      { "swracer", odin_shaders_swracer },   { "von4", odin_shaders_von4 },
+		      { "atvtrack", odin_shaders_atvtrack }, { "gfootbal", odin_shaders_gfootbal },
+		      { "smashdrv", odin_shaders_smashdrv } };
 	const fs::path odin = fs::path(core->system_dir) / "odin";
 	std::error_code ec;
 	/* A version of a game (airtrixo) draws as its parent does */
@@ -950,9 +1065,47 @@ program_lists(const std::string &game, Renderer::Options &looks)
 	looks.programs_made = (odin / "cache" / "programs").string();
 }
 
+/* The Neon 250's drawing of a Gaelco game, as the desktop's
+ * Display::attach_scenes makes it: the programs of the lists of the game
+ * (the one Odin comes with and the one kept for the player) made before its
+ * first scene, those it makes from then on added to the kept list */
+void
+create_drawing()
+{
+	if (!core || !core->gaelco || core->own)
+		return;
+
+	Renderer::Options looks{};
+	std::vector<uint64_t> keys;
+
+	program_lists(core->game->name, looks);
+	for (const std::string *list : { &looks.programs_seed, &looks.programs_kept })
+		if (!list->empty() && fs::exists(*list))
+			for (const uint64_t key : read_pmx_list(*list))
+				if (std::find(keys.begin(), keys.end(), key) == keys.end())
+					keys.push_back(key);
+	core->own = core->graphics.make_drawing();
+	core->own->keep_programs_in(looks.programs_made);
+	core->own_scale = 1;
+	unsigned prepared = 0;
+	core->own->prepare_pmx(keys, [&](unsigned done, unsigned total) {
+		if (done == 0)
+			log(RETRO_LOG_INFO, "programs: making %u ready\n", total);
+		prepared = total;
+	});
+	if (prepared)
+		log(RETRO_LOG_INFO, "programs: %u ready\n", prepared);
+	core->own->list_pmx_in(looks.programs_kept);
+	core->scene_fresh = false;
+}
+
 void
 create_renderer()
 {
+	if (core && core->gaelco) {
+		create_drawing();
+		return;
+	}
 	if (!core || !core->board || core->screen.renderer)
 		return;
 
@@ -1057,6 +1210,7 @@ context_destroy()
 		core->board_thread.wait();
 	core->frame_pending = false;
 	core->screen.renderer.reset();
+	core->own.reset();
 	core->context_ready = false;
 	if (api == Api::VULKAN)
 		vk_destroy_device();
@@ -1349,14 +1503,19 @@ shake_pads()
 		return;
 	uint16_t strength[2] = {};
 	if (c.rumble) {
-		const std::span<const uint8_t> outputs = c.board->io_outputs();
+		/* A Gaelco board: its outputs with how hard each drives, and the
+		 * torque of its wheel motor in place of a drive board's */
+		const std::span<const uint8_t> outputs = c.gaelco ? c.gaelco->io_outputs() : c.board->io_outputs();
+		const std::span<const uint8_t> levels = c.gaelco ? c.gaelco->output_levels() : std::span<const uint8_t>{};
 		const Game &game = *c.game;
 		const bool still = any_on(game.outputs, GameOutput::Role::MUTE, outputs);
 
-		c.felt_level = game.option_vibration && !still ? smoothed(c.felt_level, shake_of(c.board->sound(true))) : 0;
-		const int force = game.drive_first_output ?
-		                          DriveBoard::force_of(DriveBoard::command(outputs, game.drive_first_output)) :
-		                          0;
+		c.felt_level = !c.gaelco && game.option_vibration && !still ?
+		                       smoothed(c.felt_level, shake_of(c.board->sound(true))) :
+		                       0;
+		const int force = c.gaelco                ? c.gaelco->drive_torque().value_or(0) :
+		                  game.drive_first_output ? DriveBoard::force_of(DriveBoard::command(outputs, game.drive_first_output)) :
+		                                            0;
 		const uint16_t wheel = c.panel.steer_channel();
 		c.wheel_moves[c.wheel_move++ % c.wheel_moves.size()] = std::abs(wheel - c.wheel_was) / 65535.0;
 		c.wheel_was = wheel;
@@ -1366,11 +1525,17 @@ shake_pads()
 		c.drive_level = std::max(jolt, smoothed(c.drive_level, jolt));
 		const uint16_t felt = static_cast<uint16_t>(std::max(c.felt_level, c.drive_level) / FELT_STEP * FELT_STEP);
 
+		/* As hard as the hardest rumble output of the player that is on
+		 * drives (all the way without levels), as Controls::show */
 		for (unsigned player = 0; player < 2; player++) {
-			const bool on = std::any_of(game.outputs.begin(), game.outputs.end(), [&](const GameOutput &o) {
-				return o.role == GameOutput::Role::RUMBLE && o.player == player && o.on(outputs);
-			});
-			strength[player] = std::max<uint16_t>(on ? RUMBLE : 0, player ? 0 : felt);
+			unsigned level = 0;
+
+			for (const GameOutput &o : game.outputs)
+				if (o.role == GameOutput::Role::RUMBLE && o.player == player && o.on(outputs))
+					level = std::max(level, o.output <= levels.size() ? levels[o.output - 1] : 255u);
+			const uint16_t driven = static_cast<uint16_t>(RUMBLE * level / 255 / FELT_STEP * FELT_STEP);
+
+			strength[player] = std::max<uint16_t>(driven, player ? 0 : felt);
 		}
 	}
 	for (unsigned player = 0; player < 2; player++) {
@@ -1407,9 +1572,35 @@ send_frames(const int16_t *data, size_t frames, unsigned channels)
  * the main board, the optional one, or both mixed with the optional board at
  * its level (the game's Sound Mode and Optional Board Level; the main board
  * in a game without those); 44 100 pairs a second */
+void hand_sound(std::vector<int16_t> &out, unsigned channels);
+
+/* A Gaelco board's frame of sound, as the desktop's AudioOut plays it with
+ * a woofer: its speakers' pair, and the woofer's channel on both sides,
+ * its lows in Both (AudioOut::woofer_pairs), at its level; 32 227 pairs a
+ * second (AtvTrack::DAC_RATE) */
+void
+play_gaelco_sound()
+{
+	const std::string &mode = core->sound_mode;
+	const bool quad = mode == "quad" && audio_multi.batch_int16;
+	const AudioOut::Mode m = mode == "main"   ? AudioOut::Mode::MAIN :
+	                         mode == "option" ? AudioOut::Mode::OPTION :
+	                         quad             ? AudioOut::Mode::QUAD :
+	                                            AudioOut::Mode::MIX;
+
+	AudioOut::woofer_pairs(m, core->gaelco->woofer(), core->woofer_low, core->woofer_pairs);
+	AudioOut::interleave(m, core->gaelco->sound(), core->woofer_pairs, AudioOut::gain_of(core->option_level),
+	                     core->mixed);
+	hand_sound(core->mixed, quad ? 4 : 2);
+}
+
 void
 play_sound()
 {
+	if (core->gaelco) {
+		play_gaelco_sound();
+		return;
+	}
 	const std::vector<int16_t> &main = core->board->sound(false);
 	const std::vector<int16_t> &option = core->board->sound(true);
 	std::vector<int16_t> &out = core->mixed;
@@ -1441,6 +1632,13 @@ play_sound()
 		else
 			out.push_back(m);
 	}
+	hand_sound(out, channels);
+}
+
+/* A frame's sound to the frontend, or to the buffer of its audio thread */
+void
+hand_sound(std::vector<int16_t> &out, unsigned channels)
+{
 	out.resize(out.size() - out.size() % channels);
 
 	if (core->audio_thread) {
@@ -1494,6 +1692,138 @@ audio_thread_state(bool) {}
 
 /* The game's saves folder (defined below) */
 SaveFolder game_saves();
+
+/* ─── A Gaelco board ───────────────────────────────────────────────────── */
+
+namespace {
+
+/* The board of a Gaelco game, its settings kept in kept.bin of the game's
+ * saves as the desktop keeps them; Smashing Drive's volume set at power-on
+ * (Start Volume) */
+void
+make_gaelco()
+{
+	const std::string kept = game_saves().path("kept.bin");
+	std::error_code ec;
+	std::optional<unsigned> volume;
+
+	fs::create_directories(fs::path(kept).parent_path(), ec);
+	if (core->game->machine == "smashdrv")
+		volume = GaelcoRun::volume_up_frames(core->start_volume);
+	core->gaelco = std::make_unique<GaelcoRun>(*core->game, kept, volume);
+}
+
+/* Threaded Board: the board's frames on a thread of their own */
+void
+start_board_thread()
+{
+	if (!core->threaded)
+		return;
+	if (core->gaelco)
+		core->board_thread.start([] {
+			core->gaelco->run_frame(core->gaelco_in, core->gaelco_fine, core->gaelco_flat, core->gaelco_sorts);
+		});
+	else
+		core->board_thread.start(*core->board);
+}
+
+/* The controls and the look of the next frame, as the desktop's
+ * AtvGame::run_frame sets them: Snap where Native has no geometry shaders */
+void
+gaelco_next()
+{
+	core->panel.read_inputs(core->gaelco_in);
+	core->gaelco_fine = core->scale;
+	const DisplayUpscaleMode mode = core->upscale_mode == DisplayUpscaleMode::NATIVE && !core->own->draws_native() ?
+	                                        DisplayUpscaleMode::SNAP :
+	                                        core->upscale_mode;
+	core->gaelco_flat = static_cast<unsigned>(mode);
+	core->gaelco_sorts = core->own->sorts_per_pixel();
+}
+
+/* The frame the board ran: its scene, if it drew one, its sound and shakes */
+void
+take_gaelco_frame()
+{
+	if (PmxScene scene = core->gaelco->take_scene(); scene.rendered) {
+		core->scene = std::move(scene);
+		core->scene_fresh = true;
+	}
+	core->blanked = core->gaelco->blanked();
+	play_sound();
+	shake_pads();
+}
+
+/* Black in place of the picture while the board's DAC blanks it; the
+ * picture before again on Vulkan */
+void
+present_black(HostPicture picture)
+{
+	const unsigned w = picture.w ? picture.w : Renderer::WIDTH * core->scale;
+	const unsigned h = picture.h ? picture.h : Renderer::HEIGHT * core->scale;
+
+	if (api == Api::VULKAN) {
+		video_cb(nullptr, w, h, 0);
+		return;
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(hw_render.get_current_framebuffer()));
+	glDisable(GL_SCISSOR_TEST);
+	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+	glClear(GL_COLOR_BUFFER_BIT);
+	video_cb(RETRO_HW_FRAME_BUFFER_VALID, w, h, 0);
+}
+
+/* The last scene drawn, as the desktop's Display::draw_own: a new one drawn
+ * at the picture scale, else the picture before again */
+void
+draw_gaelco()
+{
+	Drawing &own = *core->own;
+
+	if (core->scene_fresh) {
+		if (core->scale != core->own_scale) {
+			own.set_scale(core->scale);
+			core->own_scale = core->scale;
+		}
+		own.draw_pmx(core->scene, core->anisotropy);
+		core->scene_fresh = false;
+	}
+	if (core->blanked)
+		present_black(own.frame_picture());
+	else
+		present(own.frame_picture());
+}
+
+/* A frame of a Gaelco game, run and drawn in turn, or with Threaded Board
+ * drawn while the board runs the next */
+void
+run_gaelco()
+{
+	if (api == Api::OPENGL)
+		while (glGetError() != GL_NO_ERROR)
+			;
+	if (!core->threaded) {
+		gaelco_next();
+		core->gaelco->run_frame(core->gaelco_in, core->gaelco_fine, core->gaelco_flat, core->gaelco_sorts);
+		take_gaelco_frame();
+		draw_gaelco();
+		return;
+	}
+	core->board_thread.wait();
+	const bool pending = core->frame_pending;
+
+	if (pending)
+		take_gaelco_frame();
+	gaelco_next();
+	core->board_thread.run_frame();
+	core->frame_pending = true;
+	if (pending)
+		draw_gaelco();
+	else
+		video_cb(nullptr, Renderer::WIDTH * core->scale, Renderer::HEIGHT * core->scale, 0);
+}
+
+} /* namespace */
 
 /* GLEW's loader (shim/GL/osmesa.h): the frontend's functions */
 extern "C" OSMESAproc
@@ -1570,7 +1900,8 @@ retro_get_system_av_info(retro_system_av_info *info)
 	/* The board's frames as the desktop runs them: 60 a second (its own
 	 * timing gives 60.08, hikaru.cpp) */
 	info->timing.fps = 60.0;
-	info->timing.sample_rate = 44100.0;
+	/* A Gaelco board's DAC: 32 227 pairs a second */
+	info->timing.sample_rate = core && core->gaelco ? static_cast<double>(AtvTrack::DAC_RATE) : 44100.0;
 }
 
 RETRO_API void retro_init(void) {}
@@ -1615,8 +1946,8 @@ retro_load_game(const retro_game_info *info)
 	std::string name = content.stem().string();
 	std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
 	if (!core->games.has(name)) {
-		log(RETRO_LOG_ERROR, "'%s' is not a game Odin knows (a MAME set name: airtrix, braveff, pharrier, sgnascar, swracer, von4...)\n", name.c_str());
-		message("Odin: not a Hikaru game set (airtrix, braveff, pharrier, sgnascar, swracer, von4...)");
+		log(RETRO_LOG_ERROR, "'%s' is not a game Odin knows (a MAME set name: airtrix, braveff, pharrier, sgnascar, swracer, von4, atvtrack, gfootbal, smashdrv...)\n", name.c_str());
+		message("Odin: not a Hikaru or Gaelco game set (airtrix, braveff, pharrier, atvtrack, smashdrv...)");
 		core.reset();
 		return false;
 	}
@@ -1635,8 +1966,9 @@ retro_load_game(const retro_game_info *info)
 		core.reset();
 		return false;
 	}
-	if (core->game->machine != "hikaru") {
-		log(RETRO_LOG_ERROR, "'%s' is a %s game, not a Hikaru game\n", name.c_str(), core->game->machine.c_str());
+	const bool gaelco = core->game->machine == "atvtrack" || core->game->machine == "smashdrv";
+	if (core->game->machine != "hikaru" && !gaelco) {
+		log(RETRO_LOG_ERROR, "'%s' is a %s game, neither a Hikaru nor a Gaelco game\n", name.c_str(), core->game->machine.c_str());
 		core.reset();
 		return false;
 	}
@@ -1698,8 +2030,11 @@ retro_load_game(const retro_game_info *info)
 	}
 	log(RETRO_LOG_INFO, "renderer: %s\n", api == Api::VULKAN ? "Vulkan" : "OpenGL");
 
-	core->board = Hikaru::make(*core->game, false);
-	if (!core->board) {
+	if (gaelco)
+		make_gaelco();
+	else
+		core->board = Hikaru::make(*core->game, false);
+	if (!core->board && !core->gaelco) {
 		log(RETRO_LOG_ERROR, "the board could not be made for '%s'\n", name.c_str());
 		core.reset();
 		return false;
@@ -1728,15 +2063,16 @@ retro_load_game(const retro_game_info *info)
 	retro_rumble_interface rumble{};
 	if (environ_cb(RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE, &rumble))
 		core->set_rumble = rumble.set_rumble_state;
-	core->board->set_screen(&core->screen);
-	core->board->set_panel(&core->panel);
-	core->board->keep_in(game_saves());
-	core->board->reset();
+	if (core->board) {
+		core->board->set_screen(&core->screen);
+		core->board->set_panel(&core->panel);
+		core->board->keep_in(game_saves());
+		core->board->reset();
+	}
 	/* Taken when the content starts (Restart) */
 	const char *threaded = option_value("odin_threaded");
 	core->threaded = !threaded || std::strcmp(threaded, "disabled") != 0;
-	if (core->threaded)
-		core->board_thread.start(*core->board);
+	start_board_thread();
 	log(RETRO_LOG_INFO, "%s (%s) loaded%s\n", core->game->title.c_str(), name.c_str(),
 	    core->threaded ? ", the board on a thread of its own" : "");
 	return true;
@@ -1760,10 +2096,13 @@ retro_unload_game(void)
 	core->board_thread.stop();
 	if (core->board)
 		core->board->power_off();
+	if (core->gaelco)
+		core->gaelco->power_off();
 	/* The renderer's images may still be read by the frontend's frames */
 	if (api == Api::VULKAN && vk_card)
 		vk_card->fn().vkDeviceWaitIdle(vk_card->device());
 	core->screen.renderer.reset();
+	core->own.reset();
 	core.reset();
 }
 
@@ -1789,14 +2128,45 @@ board_at_rest()
 
 RETRO_API unsigned retro_get_region(void) { return RETRO_REGION_NTSC; }
 
+/* The frames a second the core ran over the last SPEED_FRAMES, for the
+ * log: the board's 60 is full speed */
+static void
+log_speed(unsigned frame)
+{
+	const auto now = std::chrono::steady_clock::now();
+	if (core->speed_frames++ == 0)
+		core->speed_since = now;
+	else if (core->speed_frames > SPEED_FRAMES) {
+		const double seconds = std::chrono::duration<double>(now - core->speed_since).count();
+
+		log(RETRO_LOG_INFO, "speed: %.1f frames a second (60 is full speed), frame %u\n", SPEED_FRAMES / seconds, frame);
+		core->speed_frames = 1;
+		core->speed_since = now;
+	}
+}
+
 RETRO_API void
 retro_run(void)
 {
-	if (!core || !core->board)
+	if (!core || (!core->board && !core->gaelco))
 		return;
 	if (input_poll_cb)
 		input_poll_cb();
 	core->panel.poll();
+	if (core->gaelco) {
+		if (!core->own && core->context_ready)
+			create_drawing();
+		if (!core->own) {
+			video_cb(nullptr, Renderer::WIDTH, Renderer::HEIGHT, 0);
+			return;
+		}
+		bool updated = false;
+		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
+			read_options(*core);
+		run_gaelco();
+		log_speed(core->gaelco->frame());
+		return;
+	}
 	if (!core->screen.renderer) {
 		if (core->context_ready)
 			create_renderer();
@@ -1857,19 +2227,7 @@ retro_run(void)
 			video_cb(nullptr, Renderer::WIDTH * core->scale, Renderer::HEIGHT * core->scale, 0);
 	}
 
-	/* The frames a second the core ran over the last SPEED_FRAMES, for the
-	 * log: the board's 60 is full speed */
-	const auto now = std::chrono::steady_clock::now();
-	if (core->speed_frames++ == 0)
-		core->speed_since = now;
-	else if (core->speed_frames > SPEED_FRAMES) {
-		const double seconds = std::chrono::duration<double>(now - core->speed_since).count();
-
-		log(RETRO_LOG_INFO, "speed: %.1f frames a second (60 is full speed), frame %u\n", SPEED_FRAMES / seconds,
-		    core->board->frame());
-		core->speed_frames = 1;
-		core->speed_since = now;
-	}
+	log_speed(core->board->frame());
 }
 
 RETRO_API void
@@ -1878,6 +2236,18 @@ retro_reset(void)
 	/* As the desktop's Reset (Ended::RESTART, a new run_game): a new board,
 	 * not the old one's reset, which left the I/O board unseen (I/O BD IS
 	 * NOT CONNECTED TO GAME BD in Planet Harriers, NNshi) */
+	if (core && core->gaelco) {
+		/* A new Gaelco board, its settings kept as at a power-off */
+		core->board_thread.stop();
+		core->gaelco->power_off();
+		core->gaelco.reset();
+		make_gaelco();
+		core->panel.set_game(*core->game);
+		core->frame_pending = core->scene_fresh = core->blanked = false;
+		start_board_thread();
+		log(RETRO_LOG_INFO, "reset: the board made again\n");
+		return;
+	}
 	if (!core || !core->board)
 		return;
 	core->board_thread.stop();
@@ -1902,8 +2272,7 @@ retro_reset(void)
 	core->board->reset();
 	if (core->context_ready)
 		create_renderer();
-	if (core->threaded)
-		core->board_thread.start(*core->board);
+	start_board_thread();
 	log(RETRO_LOG_INFO, "reset: the board made again\n");
 }
 
@@ -1926,13 +2295,13 @@ state_temp()
 std::optional<std::vector<uint8_t>>
 state_bytes()
 {
-	if (!core || !core->board)
+	if (!core || (!core->board && !core->gaelco))
 		return std::nullopt;
 	const std::string path = state_temp();
 	std::error_code ec;
 
 	board_at_rest();
-	if (!core->board->save_state(path)) {
+	if (!(core->gaelco ? core->gaelco->save_state(path) : core->board->save_state(path))) {
 		fs::remove(path, ec);
 		return std::nullopt;
 	}
@@ -1979,7 +2348,7 @@ retro_unserialize(const void *data, size_t size)
 {
 	uint64_t count = 0;
 
-	if (!core || !core->board || size < STATE_HEADER)
+	if (!core || (!core->board && !core->gaelco) || size < STATE_HEADER)
 		return false;
 	std::memcpy(&count, data, STATE_HEADER);
 	if (count > size - STATE_HEADER)
@@ -1993,8 +2362,8 @@ retro_unserialize(const void *data, size_t size)
 			return false;
 	}
 	board_at_rest();
-	const bool ok = core->board->load_state(path);
-	core->frame_pending = false;
+	const bool ok = core->gaelco ? core->gaelco->load_state(path) : core->board->load_state(path);
+	core->frame_pending = core->scene_fresh = false;
 	std::error_code ec;
 
 	fs::remove(path, ec);

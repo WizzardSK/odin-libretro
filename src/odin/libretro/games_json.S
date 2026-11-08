@@ -16,5 +16,8 @@
 	.global C_NAME(odin_shaders_sgnascar) NEXT .balign 16 NEXT C_NAME(odin_shaders_sgnascar): .incbin "shaders/sgnascar.txt" NEXT .byte 0
 	.global C_NAME(odin_shaders_swracer) NEXT .balign 16 NEXT C_NAME(odin_shaders_swracer): .incbin "shaders/swracer.txt" NEXT .byte 0
 	.global C_NAME(odin_shaders_von4) NEXT .balign 16 NEXT C_NAME(odin_shaders_von4): .incbin "shaders/von4.txt" NEXT .byte 0
+	.global C_NAME(odin_shaders_atvtrack) NEXT .balign 16 NEXT C_NAME(odin_shaders_atvtrack): .incbin "shaders/atvtrack.txt" NEXT .byte 0
+	.global C_NAME(odin_shaders_gfootbal) NEXT .balign 16 NEXT C_NAME(odin_shaders_gfootbal): .incbin "shaders/gfootbal.txt" NEXT .byte 0
+	.global C_NAME(odin_shaders_smashdrv) NEXT .balign 16 NEXT C_NAME(odin_shaders_smashdrv): .incbin "shaders/smashdrv.txt" NEXT .byte 0
 
 	STACK_NOTE

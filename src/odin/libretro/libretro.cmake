@@ -39,7 +39,7 @@ set(LR_SOURCES
 	${LR}/host/input/roles.cpp ${LR}/host/input/sockets.cpp
 	${LR}/host/app/games.cpp ${LR}/host/app/rom_files.cpp ${LR}/host/app/user_files.cpp
 	${LR}/host/app/settings.cpp ${LR}/host/app/zip_crc.cpp
-	${LR}/libretro/libretro_odin.cpp)
+	${LR}/libretro/libretro_odin.cpp ${LR}/libretro/gaelco_run.cpp)
 
 set(LR_ARCHIVE 7zAlloc.c 7zArcIn.c 7zBuf.c 7zBuf2.c 7zCrc.c 7zCrcOpt.c 7zDec.c 7zFile.c 7zStream.c
 	Bcj2.c Bra.c Bra86.c BraIA64.c CpuArch.c Delta.c Lzma2Dec.c LzmaDec.c Ppmd7.c Ppmd7Dec.c)

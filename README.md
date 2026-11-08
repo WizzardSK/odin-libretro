@@ -1,6 +1,6 @@
 # Odin libretro core
 
-The libretro core of [Odin](https://github.com/Tovarichtch/Odin), the SEGA Hikaru emulator: the board and its OpenGL and Vulkan renderers as `odin_libretro`, without the program's window, menu and SDL.
+The libretro core of [Odin](https://github.com/Tovarichtch/Odin), the SEGA Hikaru and Gaelco (ATV Track, Smashing Drive, Gaelco Football) emulator: the boards and their OpenGL and Vulkan renderers as `odin_libretro`, without the program's window, menu and SDL.
 
 Odin's own README is in [README](README), how to build and run the desktop program in [INSTALL](INSTALL).
 
@@ -23,6 +23,7 @@ The core is `build/odin_libretro.so` (`.dll` on Windows); `odin_libretro.info` g
 ## Playing
 
 - Load a game's MAME set as content: `airtrix`, `airtrixo`, `braveff`, `pharrier`, `sgnascar`, `sgnascaro`, `swracer` or `von4` (`.zip`, `.7z` or a folder).
+- Gaelco games (Odin 0.1.1): `atvtrack`, `atvtracka`, `gfootbal`, `smashdrv` and their versions, with the files each set has; no shared set. What the board keeps (its settings in NAND or flash) goes to `saves/odin/<game>/kept.bin`. Their sound is the board's DAC at 32 227 Hz with the cabinet's woofer: Sound Mode, Woofer Level and Woofer Cutoff for each game, and Smashing Drive's Start Volume, as the desktop's `[sound.<game>]`. Gaelco Football's kick is the right stick (forward to kick, sideways for the direction, pulled back first to lift the ball), as on the desktop.
 - The shared sets `hikaru` and `mie` (and the optional `jvs13551`, `18wheelr`, `srally2`) go beside the game or in `system/odin`. A missing file is named in RetroArch's log with the set it belongs to.
 - RetroArch's video driver has to be `vulkan` (Vulkan 1.3, or 1.1 with dynamic rendering, synchronization2 and the extended dynamic state) or `glcore` (OpenGL 4.3).
 - The mesh programs (shaders) of a game are made ready before its first frame from the list Odin comes with (`system/odin/shaders/<game>.txt`) and the one kept as the game draws (`system/odin/cache/shaders/<game>.txt`, with the driver's programs in `system/odin/cache/programs`), as the desktop Odin keeps them, so the game stutters less the next time.
