@@ -64,7 +64,8 @@ set(SPIRV_DIR ${CMAKE_BINARY_DIR}/spirv)
 file(MAKE_DIRECTORY ${SPIRV_DIR}/glsl)
 set(SPIRV)
 foreach(shader whole_picture.vert blend.frag compose.vert compose.frag present.frag
-		mesh.vert mesh.geom mesh.frag sort.frag image.vert image.frag whole_window.vert
+		mesh.vert mesh.geom mesh.frag sort.frag image.vert image.frag pmx.vert pmx.geom pmx.frag pmx_sort.frag
+		whole_window.vert
 		blur.frag show.frag average.frag sides.frag)
 	string(REGEX REPLACE ".*\\." "" stage ${shader})
 	set(out ${SPIRV_DIR}/glsl/${shader}.spv)
@@ -86,6 +87,26 @@ add_custom_command(OUTPUT ${out}
 		${GLSLANG} ${out} ${GLSL}/fragment_lists.glsl ${GLSL}/mesh.frag
 	DEPENDS ${GLSL}/fragment_lists.glsl ${GLSL}/mesh.frag VERBATIM)
 list(APPEND SPIRV ${out})
+# the Gaelco boards' PMX1 (Neon 250) programs, as the top CMakeLists.txt
+set(out ${SPIRV_DIR}/glsl/pmx_native.frag.spv)
+add_custom_command(OUTPUT ${out}
+	COMMAND sh -c "{ echo '#version 450'; echo '#define NATIVE 1'; cat \"$2\"; } | \"$0\" -V --stdin -S frag -o \"$1\""
+		${GLSLANG} ${out} ${GLSL}/pmx.frag
+	DEPENDS ${GLSL}/pmx.frag VERBATIM)
+list(APPEND SPIRV ${out})
+foreach(variant list native_list)
+	set(out ${SPIRV_DIR}/glsl/pmx_${variant}.frag.spv)
+	if(variant STREQUAL "list")
+		set(defines "echo '#define LIST 1'")
+	else()
+		set(defines "echo '#define NATIVE 1'; echo '#define LIST 1'")
+	endif()
+	add_custom_command(OUTPUT ${out}
+		COMMAND sh -c "{ echo '#version 450'; ${defines}; cat \"$2\"; } | \"$0\" -V --stdin -S frag -o \"$1\""
+			${GLSLANG} ${out} ${GLSL}/pmx.frag
+		DEPENDS ${GLSL}/pmx.frag VERBATIM)
+	list(APPEND SPIRV ${out})
+endforeach()
 set(out ${SPIRV_DIR}/glsl/mesh_families.frag.spv)
 add_custom_command(OUTPUT ${out}
 	COMMAND sh -c "{ echo '#version 450'; echo '#define FAMILIES 1'; cat \"$2\"; } | \"$0\" -V --stdin -S frag -o \"$1\""
