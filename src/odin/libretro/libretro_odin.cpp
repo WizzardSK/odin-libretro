@@ -794,6 +794,8 @@ struct Core {
 	 * was last told; the desktop's shakes (Controls::show) */
 	retro_set_rumble_state_t set_rumble = nullptr;
 	bool rumble = true;
+	/* Rumble "Large Motor Only": the weak motor left still */
+	bool rumble_weak = true;
 	uint16_t felt_level = 0, drive_level = 0, wheel_was = 0x8000;
 	int force_was = 0;
 	std::array<double, 8> wheel_moves{};
@@ -834,8 +836,8 @@ retro_core_option_definition option_defs[] = {
 	  { { "enabled", "Enabled" }, { "disabled", "Disabled" }, { nullptr, nullptr } },
 	  "enabled" },
 	{ "odin_rumble", "Rumble",
-	  "The pads shake as the cabinet does: its rumble outputs, the vibration device the optional sound board drives (Star Wars Racer Arcade) and the shocks of the steering wheel (NASCAR Arcade), as the desktop Odin shakes a gamepad.",
-	  { { "enabled", "Enabled" }, { "disabled", "Disabled" }, { nullptr, nullptr } },
+	  "The pads shake as the cabinet does: its rumble outputs, the vibration device the optional sound board drives (Star Wars Racer Arcade) and the shocks of the steering wheel (NASCAR Arcade), as the desktop Odin shakes a gamepad. Large Motor Only leaves the small motor still, for a pad where the shocks of the wheel are too much on it.",
+	  { { "enabled", "Enabled" }, { "large", "Large Motor Only" }, { "disabled", "Disabled" }, { nullptr, nullptr } },
 	  "enabled" },
 	{ "odin_pharrier_sound_mode", "Sound Mode",
 	  "Planet Harriers has an optional sound board: Main, the main board alone; Both, the two mixed, the optional one at Optional Board Level; 4.0, as the desktop's Quad: four channels, the main board in the front speakers, the optional one in the rear at Optional Board Level (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both); Optional Only, the optional board alone.",
@@ -862,7 +864,7 @@ retro_core_option_definition option_defs[] = {
 	  { { "-24", "-24 dB" }, { "-23", "-23 dB" }, { "-22", "-22 dB" }, { "-21", "-21 dB" }, { "-20", "-20 dB" }, { "-19", "-19 dB" }, { "-18", "-18 dB" }, { "-17", "-17 dB" }, { "-16", "-16 dB" }, { "-15", "-15 dB" }, { "-14", "-14 dB" }, { "-13", "-13 dB" }, { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { nullptr, nullptr } },
 	  "-12" },
 	{ "odin_atvtrack_sound_mode", "Sound Mode",
-	  "ATV Track has a woofer, fed by the board's second pair of channels: Main, the speakers alone; Both, the woofer's lows mixed in at Woofer Level, as the desktop plays it; 4.0, four channels, the speakers in front and the woofer's channel in the rear (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both); Woofer Only, the woofer's channel alone.",
+	  "ATV Track has a woofer, fed by the board's second pair of channels: Main, the speakers alone; Both, the woofer's lows mixed in at Woofer Level, as the desktop plays it; 4.0, four channels, the speakers in front and the woofer's channel in the rear (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both); Woofer Only, the woofer alone: its channel's lows below Woofer Cutoff.",
 	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "4.0" }, { "option", "Woofer Only" }, { nullptr, nullptr } },
 	  "mix" },
 	{ "odin_atvtrack_option_level", "Woofer Level",
@@ -870,11 +872,11 @@ retro_core_option_definition option_defs[] = {
 	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
 	  "0" },
 	{ "odin_atvtrack_woofer_cutoff", "Woofer Cutoff",
-	  "The lows of the woofer's channel mixed in with Sound Mode Both: below that many Hz, or all of it (Off).",
+	  "The lows of the woofer's channel played with Sound Mode Both and Woofer Only: below that many Hz, or all of it (Off).",
 	  { { "80", "80 Hz" }, { "120", "120 Hz" }, { "160", "160 Hz" }, { "200", "200 Hz" }, { "off", "Off" }, { nullptr, nullptr } },
 	  "120" },
 	{ "odin_gfootbal_sound_mode", "Sound Mode",
-	  "Gaelco Football has a woofer, fed by the board's second pair of channels: Main, the speakers alone; Both, the woofer's lows mixed in at Woofer Level, as the desktop plays it; 4.0, four channels, the speakers in front and the woofer's channel in the rear (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both); Woofer Only, the woofer's channel alone.",
+	  "Gaelco Football has a woofer, fed by the board's second pair of channels: Main, the speakers alone; Both, the woofer's lows mixed in at Woofer Level, as the desktop plays it; 4.0, four channels, the speakers in front and the woofer's channel in the rear (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both); Woofer Only, the woofer alone: its channel's lows below Woofer Cutoff.",
 	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "4.0" }, { "option", "Woofer Only" }, { nullptr, nullptr } },
 	  "mix" },
 	{ "odin_gfootbal_option_level", "Woofer Level",
@@ -882,11 +884,11 @@ retro_core_option_definition option_defs[] = {
 	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
 	  "0" },
 	{ "odin_gfootbal_woofer_cutoff", "Woofer Cutoff",
-	  "The lows of the woofer's channel mixed in with Sound Mode Both: below that many Hz, or all of it (Off).",
+	  "The lows of the woofer's channel played with Sound Mode Both and Woofer Only: below that many Hz, or all of it (Off).",
 	  { { "80", "80 Hz" }, { "120", "120 Hz" }, { "160", "160 Hz" }, { "200", "200 Hz" }, { "off", "Off" }, { nullptr, nullptr } },
 	  "120" },
 	{ "odin_smashdrv_sound_mode", "Sound Mode",
-	  "Smashing Drive has a woofer, fed by the board's second pair of channels: Main, the speakers alone; Both, the woofer's lows mixed in at Woofer Level, as the desktop plays it; 4.0, four channels, the speakers in front and the woofer's channel in the rear (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both); Woofer Only, the woofer's channel alone.",
+	  "Smashing Drive has a woofer, fed by the board's second pair of channels: Main, the speakers alone; Both, the woofer's lows mixed in at Woofer Level, as the desktop plays it; 4.0, four channels, the speakers in front and the woofer's channel in the rear (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both); Woofer Only, the woofer alone: its channel's lows below Woofer Cutoff.",
 	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "4.0" }, { "option", "Woofer Only" }, { nullptr, nullptr } },
 	  "mix" },
 	{ "odin_smashdrv_option_level", "Woofer Level",
@@ -894,7 +896,7 @@ retro_core_option_definition option_defs[] = {
 	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
 	  "0" },
 	{ "odin_smashdrv_woofer_cutoff", "Woofer Cutoff",
-	  "The lows of the woofer's channel mixed in with Sound Mode Both: below that many Hz, or all of it (Off).",
+	  "The lows of the woofer's channel played with Sound Mode Both and Woofer Only: below that many Hz, or all of it (Off).",
 	  { { "80", "80 Hz" }, { "120", "120 Hz" }, { "160", "160 Hz" }, { "200", "200 Hz" }, { "off", "Off" }, { nullptr, nullptr } },
 	  "120" },
 	{ "odin_smashdrv_start_volume", "Start Volume",
@@ -994,8 +996,12 @@ read_options(Core &c)
 					if (!std::strcmp(v, START_VOLUMES[i]))
 						c.start_volume = i;
 	}
-	if (const char *v = option_value("odin_rumble"))
+	if (const char *v = option_value("odin_rumble")) {
 		c.rumble = std::strcmp(v, "disabled") != 0;
+		c.rumble_weak = std::strcmp(v, "large") != 0;
+		/* Sent again with the motors as now chosen */
+		c.rumbling[0] = c.rumbling[1] = 0xFFFF;
+	}
 	if (const char *v = option_value("odin_upscale_mode"))
 		c.upscale_mode = !std::strcmp(v, "native") ? DisplayUpscaleMode::NATIVE :
 		                 !std::strcmp(v, "raw")    ? DisplayUpscaleMode::RAW :
@@ -1556,7 +1562,7 @@ shake_pads()
 		if (strength[player] == c.rumbling[player])
 			continue;
 		c.set_rumble(player, RETRO_RUMBLE_STRONG, strength[player]);
-		c.set_rumble(player, RETRO_RUMBLE_WEAK, strength[player]);
+		c.set_rumble(player, RETRO_RUMBLE_WEAK, c.rumble_weak ? strength[player] : 0);
 		c.rumbling[player] = strength[player];
 	}
 }
@@ -1602,7 +1608,11 @@ play_gaelco_sound()
 	                         quad             ? AudioOut::Mode::QUAD :
 	                                            AudioOut::Mode::MIX;
 
-	AudioOut::woofer_pairs(m, core->gaelco->woofer(), core->woofer_low, core->woofer_pairs);
+	/* Woofer Only: what the woofer plays, its channel's lows below Woofer
+	 * Cutoff, as Both mixes them in. The channel as it comes sounded the
+	 * same as Both (NNshi): it carries more than the woofer plays. */
+	AudioOut::woofer_pairs(m == AudioOut::Mode::OPTION ? AudioOut::Mode::MIX : m, core->gaelco->woofer(),
+	                       core->woofer_low, core->woofer_pairs);
 	AudioOut::interleave(m, core->gaelco->sound(), core->woofer_pairs, AudioOut::gain_of(core->option_level),
 	                     core->mixed);
 	hand_sound(core->mixed, quad ? 4 : 2);

@@ -440,7 +440,7 @@
 				{ "name" : "RIGHT BUTTON", "id" : "right_button", "switch" : "1P LEFT", "role" : "right" },
 				{ "name" : "START", "id" : "start", "switch" : "1P START", "role" : "start" },
 				{ "name" : "LEFT LEVER", "id" : "left_lever", "analog" : 0, "low" : "up", "role" : "stick_y" },
-				{ "name" : "RIGHT LEVER", "id" : "right_lever", "analog" : 1, "low" : "up", "role" : "stick2_y" }
+				{ "name" : "RIGHT LEVER", "id" : "right_lever", "analog" : 1, "low" : "down", "role" : "stick2_y" }
 			],
 			"outputs" : [
 				{ "name" : "START LAMP", "id" : "start_lamp", "output" : 1, "role" : "lamp" },
