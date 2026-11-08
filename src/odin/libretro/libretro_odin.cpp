@@ -1367,7 +1367,9 @@ shake_pads()
 		const uint16_t felt = static_cast<uint16_t>(std::max(c.felt_level, c.drive_level) / FELT_STEP * FELT_STEP);
 
 		for (unsigned player = 0; player < 2; player++) {
-			const bool on = any_on(game.outputs, GameOutput::Role::RUMBLE, outputs, static_cast<int>(player));
+			const bool on = std::any_of(game.outputs.begin(), game.outputs.end(), [&](const GameOutput &o) {
+				return o.role == GameOutput::Role::RUMBLE && o.player == player && o.on(outputs);
+			});
 			strength[player] = std::max<uint16_t>(on ? RUMBLE : 0, player ? 0 : felt);
 		}
 	}
