@@ -783,6 +783,10 @@ struct Core {
 	std::string system_dir, save_dir;
 	bool context_ready = false;
 	std::vector<int16_t> mixed;
+	/* The frame's sound mixed into mixed, not yet handed to the frontend
+	 * (hand_frame_sound), with its channel count */
+	bool sound_mixed = false;
+	unsigned mixed_channels = 2;
 	/* Sound Mode and Optional Board Level of the game, for the three with an
 	 * optional sound board (sound_game) */
 	std::string sound_mode = "main";
@@ -1229,6 +1233,7 @@ context_destroy()
 	if (core->board_thread.running())
 		core->board_thread.wait();
 	core->frame_pending = false;
+	core->sound_mixed = false;
 	core->screen.renderer.reset();
 	core->own.reset();
 	core->context_ready = false;
@@ -1620,7 +1625,8 @@ play_gaelco_sound()
 	for (int16_t &w : core->woofer_pairs)
 		w = static_cast<int16_t>(std::clamp<int64_t>((static_cast<int64_t>(w) * gain) >> 15, -0x8000, 0x7FFF));
 	AudioOut::interleave(m, core->gaelco->sound(), core->woofer_pairs, AudioOut::UNITY, core->mixed);
-	hand_sound(core->mixed, quad ? 4 : 2);
+	core->mixed_channels = quad ? 4 : 2;
+	core->sound_mixed = true;
 }
 
 void
@@ -1661,7 +1667,22 @@ play_sound()
 		else
 			out.push_back(m);
 	}
-	hand_sound(out, channels);
+	core->mixed_channels = channels;
+	core->sound_mixed = true;
+}
+
+/* The sound play_sound mixed, to the frontend. With Threaded Board this comes
+ * after the next frame has started on the board's thread: with the
+ * frontend's audio sync the hand-over waits until there is room, and waiting
+ * with the board at rest made each frame that much later - uneven frames
+ * with Audio Thread off, the Gaelco games most (NNshi) */
+void
+hand_frame_sound()
+{
+	if (!core->sound_mixed)
+		return;
+	core->sound_mixed = false;
+	hand_sound(core->mixed, core->mixed_channels);
 }
 
 /* A frame's sound to the frontend, or to the buffer of its audio thread */
@@ -1835,6 +1856,7 @@ run_gaelco()
 		gaelco_next();
 		core->gaelco->run_frame(core->gaelco_in, core->gaelco_fine, core->gaelco_flat, core->gaelco_sorts);
 		take_gaelco_frame();
+		hand_frame_sound();
 		draw_gaelco();
 		return;
 	}
@@ -1846,6 +1868,7 @@ run_gaelco()
 	gaelco_next();
 	core->board_thread.run_frame();
 	core->frame_pending = true;
+	hand_frame_sound();
 	if (pending)
 		draw_gaelco();
 	else
@@ -2231,11 +2254,13 @@ retro_run(void)
 		draw();
 		present(renderer.frame_picture());
 		play_sound();
+		hand_frame_sound();
 		shake_pads();
 	} else {
 		/* The frame the thread ran is taken with the board at rest, its
-		 * sound handed over before the next frame clears it; then the
-		 * next frame runs on the thread while this one is drawn */
+		 * sound mixed before the next frame clears it; then the next frame
+		 * runs on the thread while this one's sound is handed over and it
+		 * is drawn */
 		core->board_thread.wait();
 		const bool pending = core->frame_pending;
 
@@ -2248,6 +2273,7 @@ retro_run(void)
 		renderer.begin_frame();
 		core->board_thread.run_frame();
 		core->frame_pending = true;
+		hand_frame_sound();
 		if (pending) {
 			draw();
 			core->screen.set_drawing(false);
@@ -2272,7 +2298,7 @@ retro_reset(void)
 		core->gaelco.reset();
 		make_gaelco();
 		core->panel.set_game(*core->game);
-		core->frame_pending = core->scene_fresh = core->blanked = false;
+		core->frame_pending = core->scene_fresh = core->blanked = core->sound_mixed = false;
 		start_board_thread();
 		log(RETRO_LOG_INFO, "reset: the board made again\n");
 		return;
@@ -2282,6 +2308,7 @@ retro_reset(void)
 	core->board_thread.stop();
 	core->board->power_off();
 	core->frame_pending = false;
+	core->sound_mixed = false;
 	/* The renderer reads the old board's memory (create_renderer): it goes
 	 * first and is made again for the new board, as the desktop attaches
 	 * its renderer to each run */
