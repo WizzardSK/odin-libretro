@@ -29,6 +29,7 @@
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <numbers>
 #include <span>
 #include <string>
 #include <vector>
@@ -36,6 +37,40 @@
 struct SDL_AudioStream;
 
 namespace odin {
+
+/* The lows of a channel, as a woofer plays them: a second-order Butterworth
+ * low-pass at hz (0: the channel as it is). HEURISTIC: no manual gives the
+ * crossover of the Gaelco cabinets. */
+class LowPass {
+public:
+	LowPass(double hz = 0, int rate = 1)
+	{
+		if (hz <= 0 || hz * 2 >= rate)
+			return;
+
+		const double w = 2.0 * std::numbers::pi * hz / rate, alpha = std::sin(w) / std::sqrt(2.0), a0 = 1.0 + alpha;
+
+		m_b0 = m_b2 = (1.0 - std::cos(w)) / 2.0 / a0;
+		m_b1 = (1.0 - std::cos(w)) / a0;
+		m_a1 = -2.0 * std::cos(w) / a0;
+		m_a2 = (1.0 - alpha) / a0;
+	}
+
+	int16_t operator()(int16_t x)
+	{
+		const double y = m_b0 * x + m_b1 * m_x1 + m_b2 * m_x2 - m_a1 * m_y1 - m_a2 * m_y2;
+
+		m_x2 = m_x1;
+		m_x1 = x;
+		m_y2 = m_y1;
+		m_y1 = y;
+		return static_cast<int16_t>(std::clamp<long>(std::lround(y), -0x8000, 0x7FFF));
+	}
+
+private:
+	double m_b0 = 1, m_b1 = 0, m_b2 = 0, m_a1 = 0, m_a2 = 0;
+	double m_x1 = 0, m_x2 = 0, m_y1 = 0, m_y2 = 0;
+};
 
 /* The sound of the two boards to the speakers of the host, as the user
  * chooses: the main board, the optional one, both on two channels, or the
@@ -84,6 +119,20 @@ public:
 		}
 	}
 
+	/* The other two channels of a Gaelco board, its woofer's and a fourth,
+	 * as the mix and the optional board alone take them: the lows of the
+	 * woofer's (all of it alone) on both sides. Four channels play the
+	 * pair as it is. */
+	static void woofer_pairs(Mode mode, std::span<const int16_t> pairs, LowPass &low, std::vector<int16_t> &out)
+	{
+		out.clear();
+		for (size_t i = 0; i + 1 < pairs.size(); i += 2) {
+			const int16_t woofer = mode == Mode::MIX ? low(pairs[i]) : pairs[i];
+
+			out.insert(out.end(), { woofer, woofer });
+		}
+	}
+
 	/* How hard a vibration device fed by a sound shakes, 0 to 0xFFFF: the
 	 * level of left and right together, twice over, none below 1/32 of the
 	 * whole way. HEURISTIC: a pad is not a shaker, and the VIBRATION volume
@@ -108,10 +157,11 @@ public:
 	 * up and slows down (HEURISTIC) */
 	static uint16_t smoothed(uint16_t was, uint16_t now) { return static_cast<uint16_t>((3 * was + now) / 4); }
 
-	/* nullptr when the host gives no sound device; the optional board at
-	 * option_db in the mix; on the device of that name, else (or when it
-	 * is not there) on the one the system gives */
-	static std::unique_ptr<AudioOut> make(Mode mode, double option_db, const std::string &device = "");
+	/* nullptr without a sound device. option_db: the optional board's
+	 * mix level. Uses the named device, else the system default. A rate
+	 * of 0 means the Hikaru's. */
+	static std::unique_ptr<AudioOut> make(Mode mode, double option_db, const std::string &device = "",
+	                                      int rate = 0);
 	~AudioOut();
 	AudioOut(const AudioOut &) = delete;
 	AudioOut &operator=(const AudioOut &) = delete;
@@ -124,6 +174,13 @@ public:
 	bool change(Mode mode, const std::string &device);
 	Mode mode() const { return m_mode; }
 	void set_option_level(double db) { m_option_gain = gain_of(db); }
+	/* The optional pair is a woofer's channel and another (the Gaelco
+	 * boards, woofer_pairs), the lows of the woofer below hz in the mix */
+	void set_woofer(double hz)
+	{
+		m_woofer = true;
+		m_low = LowPass(hz, m_rate);
+	}
 	/* The volume of Odin, 0 to 1, and whether it is heard (not while its
 	 * window is in the background, when the user says so) */
 	void set_volume(float volume);
@@ -137,8 +194,8 @@ public:
 	void pause(bool paused);
 
 private:
-	AudioOut(SDL_AudioStream *stream, Mode mode, int32_t option_gain)
-		: m_stream(stream), m_mode(mode), m_option_gain(option_gain)
+	AudioOut(SDL_AudioStream *stream, Mode mode, int32_t option_gain, int rate)
+		: m_stream(stream), m_mode(mode), m_option_gain(option_gain), m_rate(rate)
 	{
 	}
 
@@ -147,7 +204,10 @@ private:
 	SDL_AudioStream *m_stream;	/* bound to the device */
 	Mode m_mode;
 	int32_t m_option_gain;
-	std::vector<int16_t> m_frames;
+	int m_rate;
+	std::vector<int16_t> m_frames, m_woofer_frames;
+	bool m_woofer = false;
+	LowPass m_low;
 	float m_volume = 1.0f;
 	bool m_heard = true;
 	bool m_paused = false;

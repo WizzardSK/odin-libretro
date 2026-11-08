@@ -42,12 +42,14 @@ namespace odin {
 
 namespace {
 
-/* time / period, for a timer. No division where the period is a power of
- * two, as it is unless the peripheral clock is a third or a sixth of the
- * CPU's: a game may read a timer thousands of times in a frame. */
+/* time / period, avoiding a variable division for common periods: a game may
+ * read a timer thousands of times a frame. */
 uint64_t periods(uint64_t time, uint64_t period)
 {
-	return std::has_single_bit(period) ? time >> std::countr_zero(period) : time / period;
+	const unsigned shift = static_cast<unsigned>(std::countr_zero(period));
+	const uint64_t odd = period >> shift;
+
+	return odd == 1 ? time >> shift : odd == 3 ? (time >> shift) / 3 : time / period;
 }
 
 /* Bytes per transfer for CHCR.TS */
@@ -151,6 +153,17 @@ void Sh4::port_a_put(uint16_t value)
 	}
 	outside();
 	m_bus.port_a_write(static_cast<uint16_t>(pins));
+}
+
+uint16_t Sh4::port_a_outputs() const
+{
+	const uint32_t pctra = static_cast<uint32_t>(reg_get(4, BSC_PCTRA));
+	uint16_t outputs = 0;
+
+	for (uint32_t i = 0; i < 16; i++)
+		if ((pctra >> (i * 2)) & 1)
+			outputs = static_cast<uint16_t>(outputs | 1u << i);
+	return outputs;
 }
 
 /* Interrupt controller: the priorities of the on-chip sources (table
@@ -420,6 +433,93 @@ void Sh4::dmac_update(uint32_t request)
 	}
 }
 
+/* External requests in single address mode (hardware manual, 14.3.2):
+ * the device on DACK gives or takes each unit, the memory side is DAR (RS
+ * 0011) or SAR (RS 0010); one unit a request, by cycle steal; TE and DMTE
+ * as for the other modes when the count runs out. HEURISTIC: the unit
+ * moves at once, its bus cycles not counted. Units of 1, 2 and 4 bytes. */
+bool Sh4::dreq_ready(uint32_t ch) const
+{
+	if (ch >= 4) {
+		return false;
+	}
+
+	const uint32_t offs = ch * 0x10;
+	const uint32_t dmaor = static_cast<uint32_t>(reg_get(4, DMAC_DMAOR));
+	const uint32_t chcr = static_cast<uint32_t>(reg_get(4, DMAC_CHCR0 + offs));
+	const uint32_t rs = (chcr >> 8) & 15, ts = (chcr >> 4) & 7;
+
+	/* DME and DE; neither NMIF, AE nor TE */
+	return (dmaor & chcr & 1) && !(dmaor & 6) && !(chcr & 2) && (rs == 2 || rs == 3) && ts >= 1 && ts <= 3 &&
+	       reg_get(4, DMAC_TCR0 + offs) != 0;
+}
+
+/* The unit has moved: one fewer to go, the end told when none is left */
+static void dreq_counted(uint32_t &tcr, uint32_t &chcr)
+{
+	tcr--;
+	if (tcr == 0) {
+		chcr |= 2;	/* TE */
+	}
+}
+
+void Sh4::dreq_to_memory(uint32_t ch, uint32_t value)
+{
+	if (!dreq_ready(ch) || ((reg_get(4, DMAC_CHCR0 + ch * 0x10) >> 8) & 15) != 3) {
+		return;
+	}
+	/* It writes the memory behind the back of the blocks. */
+	outside();
+
+	const uint32_t offs = ch * 0x10;
+	uint32_t chcr = static_cast<uint32_t>(reg_get(4, DMAC_CHCR0 + offs));
+	uint32_t dar = static_cast<uint32_t>(reg_get(4, DMAC_DAR0 + offs));
+	uint32_t tcr = static_cast<uint32_t>(reg_get(4, DMAC_TCR0 + offs));
+	const uint32_t unit = DMAC_UNIT[(chcr >> 4) & 7], dm = (chcr >> 14) & 3;
+
+	if (dm == 2) {
+		dar -= unit;
+	}
+	dmac_put(dar, unit, unit == 4 ? value : value & ((1u << (8 * unit)) - 1));
+	if (dm == 1) {
+		dar += unit;
+	}
+	dreq_counted(tcr, chcr);
+	reg_put(4, DMAC_DAR0 + offs, dar);
+	reg_put(4, DMAC_TCR0 + offs, tcr);
+	reg_put(4, DMAC_CHCR0 + offs, chcr);
+	dmac_update_irqs();
+}
+
+std::optional<uint32_t> Sh4::dreq_from_memory(uint32_t ch)
+{
+	if (!dreq_ready(ch) || ((reg_get(4, DMAC_CHCR0 + ch * 0x10) >> 8) & 15) != 2) {
+		return std::nullopt;
+	}
+
+	const uint32_t offs = ch * 0x10;
+	uint32_t chcr = static_cast<uint32_t>(reg_get(4, DMAC_CHCR0 + offs));
+	uint32_t sar = static_cast<uint32_t>(reg_get(4, DMAC_SAR0 + offs));
+	uint32_t tcr = static_cast<uint32_t>(reg_get(4, DMAC_TCR0 + offs));
+	const uint32_t unit = DMAC_UNIT[(chcr >> 4) & 7], sm = (chcr >> 12) & 3;
+
+	if (sm == 2) {
+		sar -= unit;
+	}
+
+	const uint32_t value = static_cast<uint32_t>(dmac_get(sar, unit));
+
+	if (sm == 1) {
+		sar += unit;
+	}
+	dreq_counted(tcr, chcr);
+	reg_put(4, DMAC_SAR0 + offs, sar);
+	reg_put(4, DMAC_TCR0 + offs, tcr);
+	reg_put(4, DMAC_CHCR0 + offs, chcr);
+	dmac_update_irqs();
+	return value;
+}
+
 /* Timers (hardware manual, section 12). A channel counts down on the
  * peripheral clock divided by 4, 16, 64, 256 or 1024 (TCR.TPSC). The count
  * after zero is the underflow: it sets TCR.UNF, takes TCOR again and, with
@@ -613,6 +713,11 @@ bool Sh4::onchip_read(uint32_t addr, uint32_t size, uint64_t &value)
 		sized(4);
 		return true;
 	}
+	/* The serial ports that send at once: their transmitters are always
+	 * empty */
+	if (m_serial_at_once &&
+	    ((reg >= SCI_SCBRR1 - 4 && reg < SCI_END) || (reg >= SCIF_SCBRR2 - 4 && reg < SCIF_END)))
+		return true;
 	switch (reg) {
 	/* HEURISTIC: RFCR and WTCSR also read as port A. */
 	case BSC_RFCR:
@@ -650,12 +755,14 @@ bool Sh4::onchip_read(uint32_t addr, uint32_t size, uint64_t &value)
 		value = m_tmu_counter[(reg - TMU_TCNT0) / 12];
 		m_timer_read = true;
 		return true;
+	/* HEURISTIC: read as 32 bits, the register is the low half */
 	case tcr(0):
 	case tcr(1):
 	case tcr(2):
-		sized(2);
+		if (size != 4)
+			sized(2);
 		tmu_sync(m_at);
-		value = reg_get(size, addr);
+		value = reg_get(2, addr);
 		return true;
 	case PM_PMCTR1H:
 		value = (m_pm_counter[0] >> 32) & 0xFFFF;
@@ -695,6 +802,16 @@ bool Sh4::onchip_write(uint32_t addr, uint32_t size, uint64_t value)
 		reg_put(size, addr, value);
 		return true;
 	}
+	if (m_serial_at_once && reg >= SCI_SCBRR1 - 4 && reg < SCI_END) {
+		/* TDRE and TEND stay set */
+		reg_put(size, addr, reg == SCI_SCSSR1 ? (v | 0x84) : v);
+		return true;
+	}
+	if (m_serial_at_once && reg >= SCIF_SCBRR2 - 4 && reg < SCIF_END) {
+		/* TEND and TDFE stay set */
+		reg_put(size, addr, reg == SCIF_SCFSR2 ? (v | 0x60) : v);
+		return true;
+	}
 
 	switch (reg) {
 	case CPG_STBCR:
@@ -731,20 +848,27 @@ bool Sh4::onchip_write(uint32_t addr, uint32_t size, uint64_t value)
 	case INTC_ICR: {
 		uint32_t old = static_cast<uint32_t>(reg_get(2, addr));
 		sized(2);
+		/* HEURISTIC: reserved bits 13-10 are dropped */
+		v &= ~0x3C00u;
 		only(ICR_NMIL | ICR_MAI | ICR_NMIB | ICR_NMIE | ICR_IRLM);
 		/* NMIL is read only */
 		reg_put(2, addr, (old & ICR_NMIL) | (v & ~ICR_NMIL));
 		update_irqs();
 		return true;
 	}
+	/* HEURISTIC: written as 32 bits, the low half is used */
 	case INTC_IPRA:
 	case INTC_IPRC:
-		sized(2);
+		if (size != 4)
+			sized(2);
+		v &= 0xFFFF;
 		reg_put(2, addr, v);
 		update_irq_priorities();
 		return true;
 	case INTC_IPRB:
-		sized(2);
+		if (size != 4)
+			sized(2);
+		v &= 0xFFFF;
 		only(0xFFF0);
 		reg_put(2, addr, v);
 		update_irq_priorities();

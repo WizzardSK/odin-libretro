@@ -468,8 +468,7 @@ Menu::bar_input(BarItems &b)
 	}
 	if (state.can_shake)
 		toggle("Vibration", {}, state.shake, state.game);
-	if (state.sights[0])
-		toggle("Light gun mode", b.key(Action::LIGHT_GUN), state.light_gun, state.game);
+	toggle("Hide cursor", b.key(Action::LIGHT_GUN), state.hide_cursor, state.game);
 	ImGui::Separator();
 	if (ImGui::BeginMenu("Hotkeys")) {
 		b.framed();
@@ -602,8 +601,8 @@ Menu::bar_audio(BarItems &b)
 		ImGui::EndMenu();
 	}
 	/* The game that runs, when it has an optional sound
-	 * board, that game alone: how it plays, and its level,
-	 * with Both */
+	 * board or a woofer, that game alone: how it plays, and
+	 * its level, with Both */
 	for (SoundGame &game : state.sound_games) {
 		if (!ImGui::BeginMenu(game.title.c_str()))
 			continue;
@@ -618,9 +617,13 @@ Menu::bar_audio(BarItems &b)
 			ImGui::TextDisabled("Reset the game to apply");
 		ImGui::Separator();
 		ImGui::BeginDisabled(game.played != 1);
-		ImGui::TextUnformatted("Optional board level");
+		ImGui::TextUnformatted(game.level_name);
 		ImGui::SetNextItemWidth(kit.px(SLIDER_W));
-		if (ImGui::SliderFloat("##level", &game.level, -60.0f, 12.0f, "%+.0f dB", ImGuiSliderFlags_AlwaysClamp))
+		/* The level as the page says it: "-12 dB", "0 dB", "+3 dB" */
+		char db[16];
+
+		std::snprintf(db, sizeof(db), "%s%.0f dB", game.level > 0.5f ? "+" : "", static_cast<double>(game.level) + 0.0);
+		if (ImGui::SliderFloat("##level", &game.level, -60.0f, 12.0f, db, ImGuiSliderFlags_AlwaysClamp))
 			game.level = std::round(game.level);
 		ImGui::EndDisabled();
 		ImGui::EndMenu();
@@ -662,7 +665,9 @@ Menu::bar_link(BarItems &b)
 	}
 	ImGui::Separator();
 	b.greyed("Next cabinet", state.link_next.empty() ? std::string("none (set it in Settings)") : state.link_next);
-	ImGui::TextDisabled(state.link_given ? "Set by ODIN_NETBD" : "Applies when a game starts");
+	ImGui::TextDisabled(state.link_given ? "Set by ODIN_NETBD" :
+	                    state.gaelco     ? "Applies to the games that link: this one plays alone" :
+	                                       "Applies when a game starts");
 }
 
 void

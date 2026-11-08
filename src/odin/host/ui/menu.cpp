@@ -52,11 +52,8 @@
 PICTURE(upscale_1) PICTURE(upscale_2) PICTURE(upscale_3) PICTURE(upscale_4) PICTURE(upscale_5) PICTURE(upscale_6)
 PICTURE(filter_1) PICTURE(filter_2) PICTURE(filter_4) PICTURE(filter_8) PICTURE(filter_16) PICTURE(screen)
 PICTURE(whole) PICTURE(torn) PICTURE(mode_cabinet) PICTURE(mode_raw) PICTURE(mode_snap) PICTURE(mode_native)
-PICTURE(crt_none) PICTURE(crt_sega_monitor_29) PICTURE(crt_sega_projector_50) PICTURE(crt_pc_monitor_vga)
-PICTURE(crt_pc_monitor_vga_flat) PICTURE(crt_pc_monitor_vga_good) PICTURE(crt_pc_monitor_vga_good_flat)
-PICTURE(crt_pc_monitor_vga_premium) PICTURE(crt_pc_monitor_vga_premium_flat)
-PICTURE(crt_pc_monitor_vga_premium_plus) PICTURE(crt_pc_monitor_vga_premium_plus_flat)
-PICTURE(crt_pc_monitor_vga_extreme) PICTURE(crt_pc_monitor_vga_extreme_flat)
+PICTURE(crt_none) PICTURE(crt_sega_monitor_29) PICTURE(crt_sega_projector_50) PICTURE(crt_gaelco_monitor_28)
+PICTURE(crt_gaelco_monitor_34)
 #undef PICTURE
 /* The font of the menu (menu_fonts.S) */
 extern "C" const unsigned char odin_font_cozette[], odin_font_cozette_end[];
@@ -82,16 +79,8 @@ const std::pair<const unsigned char *, const unsigned char *> PICTURE_FILES[] = 
 	{ odin_picture_crt_none, odin_picture_crt_none_end },
 	{ odin_picture_crt_sega_monitor_29, odin_picture_crt_sega_monitor_29_end },
 	{ odin_picture_crt_sega_projector_50, odin_picture_crt_sega_projector_50_end },
-	{ odin_picture_crt_pc_monitor_vga, odin_picture_crt_pc_monitor_vga_end },
-	{ odin_picture_crt_pc_monitor_vga_flat, odin_picture_crt_pc_monitor_vga_flat_end },
-	{ odin_picture_crt_pc_monitor_vga_good, odin_picture_crt_pc_monitor_vga_good_end },
-	{ odin_picture_crt_pc_monitor_vga_good_flat, odin_picture_crt_pc_monitor_vga_good_flat_end },
-	{ odin_picture_crt_pc_monitor_vga_premium, odin_picture_crt_pc_monitor_vga_premium_end },
-	{ odin_picture_crt_pc_monitor_vga_premium_flat, odin_picture_crt_pc_monitor_vga_premium_flat_end },
-	{ odin_picture_crt_pc_monitor_vga_premium_plus, odin_picture_crt_pc_monitor_vga_premium_plus_end },
-	{ odin_picture_crt_pc_monitor_vga_premium_plus_flat, odin_picture_crt_pc_monitor_vga_premium_plus_flat_end },
-	{ odin_picture_crt_pc_monitor_vga_extreme, odin_picture_crt_pc_monitor_vga_extreme_end },
-	{ odin_picture_crt_pc_monitor_vga_extreme_flat, odin_picture_crt_pc_monitor_vga_extreme_flat_end },
+	{ odin_picture_crt_gaelco_monitor_28, odin_picture_crt_gaelco_monitor_28_end },
+	{ odin_picture_crt_gaelco_monitor_34, odin_picture_crt_gaelco_monitor_34_end },
 };
 
 /* The hints of the mouse Dear ImGui sets for itself (imgui_impl_sdl3.cpp):
@@ -508,21 +497,23 @@ Menu::build(MenuState &state)
 	 * as it takes, under a line: the page above it; the tip of the row the
 	 * gamepad frames in its place. Input says it with the names and inputs
 	 * of its controls. While an input is caught, Input says what to do
-	 * there, keys and all. The keys are those the user set for the menu, to
-	 * close the game (over one) and to quit. */
+	 * there, keys and all, and while it says a control, all of it. The
+	 * keys are those the user set for the menu, to close the game (over
+	 * one) and to quit. */
 	const std::string back = first_key(state, Hotkeys::Action::MENU), quit = first_key(state, Hotkeys::Action::QUIT);
 	const std::string close = state.library ? std::string() : first_key(state, Hotkeys::Action::CLOSE_GAME);
 	std::string keys_said;
 
 	if (!back.empty())
-		keys_said = back + (state.library ? ": back to the library" : ": back to the game");
+		keys_said = back + (state.testing ? ": stop the test" :
+		                    state.library ? ": back to the library" : ": back to the game");
 	if (!close.empty())
 		keys_said += (keys_said.empty() ? "" : "    ") + close + ": close game";
 	if (!quit.empty())
 		keys_said += (keys_said.empty() ? "" : "    ") + quit + ": quit";
 
 	const char *const keys = keys_said.c_str();
-	const bool keys_shown = m_page != INPUT || !state.catching;
+	const bool keys_shown = m_page != INPUT || (!state.catching && !input_tells(state));
 	const float keys_w = ImGui::CalcTextSize(keys).x, help_w = std::max(0.0f, w - 3.0f * pad - keys_w);
 	const std::string help = m_page == INPUT ? std::string() :
 	                         framed_tip.empty() ? this->help(m_page, state) :
@@ -556,9 +547,9 @@ Menu::build(MenuState &state)
 	ImGui::EndChild();
 	ImGui::PopID();
 	m_focus.last = m_focus.count;
-	/* The advanced options of the page Input close with it */
+	/* The advanced options and the test of the page Input end with it */
 	if (m_page != INPUT)
-		state.advanced = false;
+		state.advanced = state.testing = false;
 
 	list->AddLine({ a.x, foot_top - foot_pad }, { b.x, foot_top - foot_pad }, palette.line, kit.stroke());
 	if (m_page == INPUT)
@@ -771,8 +762,9 @@ Menu::page_display(MenuKit &kit, MenuState &state) const
 		screens.push_back(state.filter);
 		screen = static_cast<int>(screens.size()) - 1;
 	}
-	kit.next_tip("Imitates a screen (Lola Retro filters): the cabinets' screens from Sega's manuals, a monitor for "
-	             "Planet Harriers and NASCAR, a projector for the other games; or a PC monitor of the VGA days. "
+	kit.next_tip("Imitates a screen (Lola Retro filters): the cabinets' screens from their manuals, Sega's monitor for "
+	             "Planet Harriers and NASCAR and projector for the other Hikaru games, Gaelco's 28-inch monitor for "
+	             "Smashing Drive and Gaelco Football and 34-inch for ATV Track. "
 	             "Demanding on the graphics card.");
 	watch(PREVIEW_CRT, [&] {
 		if (kit.dropdown("CRT screen", nullptr, screens, screen) && screen >= 0 &&
@@ -1043,7 +1035,8 @@ Menu::help(int page, const MenuState &state)
 	case DISPLAY:
 		return std::string("These settings apply to every game") + kept;
 	case AUDIO:
-		return std::string("Sound only: vibration is on the Input page") + kept;
+		return state.kept ? "Cabinet sound is set per game. Vibration is on the Input page." :
+		                    std::string("Cabinet sound is set per game. Vibration is on the Input page. ") + NOT_SAVED;
 	case HOTKEYS:
 		return state.hotkey_catching || state.kept ? hotkeys_help(state) :
 		       hotkeys_help(state) + " " + NOT_SAVED;

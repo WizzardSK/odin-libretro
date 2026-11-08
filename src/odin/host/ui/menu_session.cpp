@@ -54,7 +54,7 @@ open_archive(const FolderDialog::Answer &answer, const GameList &games, std::str
 
 	std::transform(name.begin(), name.end(), name.begin(),
 	               [](unsigned char c) { return static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c); });
-	for (const auto &[game, title] : games.titles("hikaru"))
+	for (const auto &[game, title] : games.titles())
 		if (game == name)
 			return Opened{ game, file.parent_path().string() };
 	std::fprintf(stderr,
@@ -118,15 +118,18 @@ press_escape()
 
 MenuSession::MenuSession(const Options &options, Display &display, Keyboard &keys, Controls &controls,
                          Settings &settings, const std::string &settings_file, const GameList &games, const Game *game,
-                         Hikaru *board, AudioOut *audio, std::unique_ptr<OutputsNetwork> outputs, bool network)
+                         const Board *running, Hikaru *board, AudioOut *audio, std::unique_ptr<OutputsNetwork> outputs,
+                         bool network)
 	: m_options(options), m_display(display), m_keys(keys), m_controls(controls), m_settings(settings),
-	  m_settings_file(settings_file), m_games(games), m_game(game), m_board(board), m_audio(audio),
+	  m_settings_file(settings_file), m_games(games), m_game(game), m_running(running), m_board(board), m_audio(audio),
 	  m_outputs(std::move(outputs)), m_hotkeys(settings), m_nav(settings),
 	  m_menu_test(game ? static_cast<unsigned>(std::max(env_int("ODIN_MENU_TEST", 0), 0)) : 0),
 	  m_menu_test_page(m_menu_test ? env_int("ODIN_MENU_PAGE", -1) : -1),
 	  m_bar_test(m_menu_test ? env_int("ODIN_BAR_MENU", -1) : -1)
 {
 	MenuState &state = m_menu_state;
+
+	m_nav.hotkey(m_hotkeys.button(), m_hotkeys.combos());
 
 	state.scale = options.display.scale;
 	state.anisotropy = options.display.anisotropy;
@@ -194,7 +197,7 @@ MenuSession::MenuSession(const Options &options, Display &display, Keyboard &key
 	read_menu_settings();
 	state.shown = state.running = state.games.size();
 	for (size_t g = 0; g < state.games.size(); g++)
-		if (board && state.games[g].first == board->game_name())
+		if (game && state.games[g].first == game->family())
 			state.shown = state.running = g;
 	/* The BIOS alone, or no game: the page Input shows the first one */
 	if (state.running == state.games.size())
@@ -202,7 +205,8 @@ MenuSession::MenuSession(const Options &options, Display &display, Keyboard &key
 	take_card();
 }
 
-/* Each game of the list: the ones whose optional sound board the user may
+/* Each game of the list but the versions (they share their parent's
+ * settings), by title: the ones whose optional sound board the user may
  * hear, as the cabinet plays it unless the settings or -o say; whether it
  * links cabinets */
 void
@@ -210,29 +214,74 @@ MenuSession::fill_games()
 {
 	MenuState &state = m_menu_state;
 
-	state.games = m_games.titles("hikaru");
+	state.games.clear();
+	for (const GameList::Entry &entry : m_games.entries())
+		if (entry.parent.empty())
+			state.games.emplace_back(entry.name, entry.title);
+	std::stable_sort(state.games.begin(), state.games.end(),
+	                 [](const auto &a, const auto &b) { return title_before(a.second, b.second); });
 	for (const auto &[name, title] : state.games) {
-		const bool runs = m_game && name == m_game->name;
+		const bool runs = m_game && name == m_game->family();
 		const std::optional<Game> other = runs ? std::nullopt : m_games.describe(name);
 
 		const Game *const described = runs ? m_game : other ? &*other : nullptr;
 
 		state.game_links.push_back(described && described->link.cabinets);
-		if (!described || !(described->option_speakers || described->option_vibration))
+		state.game_gaelco.push_back(described && described->machine != "hikaru");
+
+		MenuState::GameAudio audio;
+
+		if (described) {
+			audio.parts = described->sound_parts;
+			audio.seated = described->seated;
+			for (const Game::Cabinet &model : described->cabinets)
+				if (model.seated && !*model.seated)
+					audio.standing.push_back(model.id);
+			audio.family = described->woofer ? SoundFamily::WOOFER :
+			               described->option_speakers || described->option_vibration ? SoundFamily::TWO_BOARDS :
+			               SoundFamily::ONE;
+		}
+		if (audio.parts.empty())
+			for (const SoundPart::Place at : { SoundPart::Place::FRONT_LEFT, SoundPart::Place::FRONT_RIGHT }) {
+				SoundPart part;
+
+				part.at = at;
+				audio.parts.push_back(part);
+			}
+		state.game_audio.push_back(std::move(audio));
+
+		const bool smash = described && described->machine == "smashdrv";
+		const bool woofer = described && described->woofer;
+
+		if (!described || !(described->option_speakers || described->option_vibration || woofer || smash))
 			continue;
 
-		/* As the cabinet: both boards in the speakers where it has
-		 * some for the optional one */
-		const int cabinet = described->option_speakers ? 1 : 0;
+		/* As the cabinet: both boards, or the woofer, in the speakers
+		 * where it has some for the optional board, or a woofer */
+		const int cabinet = described->option_speakers || woofer ? 1 : 0;
 		SoundGame sound = { name, title, cabinet, cabinet, 0.0f, 0.0f, false };
 
+		sound.mixed = described->option_speakers || described->option_vibration || woofer;
+		sound.woofer = woofer;
+		sound.level_name = woofer ? "Woofer" : described->option_speakers ? "Seat speakers" : "Panel shaker";
 		sound.level = sound.standard = static_cast<float>(described->option_level);
 		for (const auto &[key, value] : m_settings.section("sound." + name)) {
-			if (key == "mode" && mode_named(value))
+			if (key == "mode" && mode_named(value)) {
 				sound.played = played_of(*mode_named(value));
-			else if (key == "option_level" && level_named(value))
+			} else if (key == (woofer ? "woofer_level" : "option_level") && level_named(value)) {
 				sound.level = static_cast<float>(*level_named(value));
+			} else if (key == "woofer_cutoff" && woofer) {
+				for (int c = 0; c < static_cast<int>(std::size(WOOFER_CUTOFFS)); c++)
+					if (value == WOOFER_CUTOFFS[c])
+						sound.cutoff = c;
+			} else if (key == "start_volume") {
+				for (int v = 0; v < static_cast<int>(std::size(START_VOLUMES)); v++)
+					if (value == START_VOLUMES[v])
+						sound.start = v;
+			}
 		}
+		if (smash && sound.start < 0)
+			sound.start = START_VOLUME_STANDARD;
 		if (runs && m_options.sound_asked) {
 			sound.played = m_options.sound ? played_of(*m_options.sound) : -1;
 			sound.locked = true;
@@ -300,16 +349,16 @@ MenuSession::card_file(const std::string &name) const
 }
 
 std::string
-MenuSession::light_gun_in_out()
+MenuSession::cursor_in_out()
 {
-	if (!m_game || !m_controls.has_sight())
+	if (!m_game || !m_controls.on())
 		return {};
 
-	const bool on = !light_gun_mode_on(m_settings, m_game->name);
+	const bool on = !m_controls.hides_cursor();
 
-	keep_light_gun(m_game->name, on, true);
+	keep_hide_cursor(m_game->name, on, true, m_controls.panel().takes_mouse());
 	m_controls.follow_cursor();
-	return on ? "Light gun mode: the mouse aims" : "Light gun mode off: the mouse is a pointer";
+	return on ? "Cursor hidden: the mouse controls the game" : "Cursor shown: normal pointer";
 }
 
 /* In hand, the card goes into the slot; at the slot, it comes back to the
@@ -467,6 +516,8 @@ MenuSession::event(const SDL_Event &event)
 {
 	using Action = Hotkeys::Action;
 
+	if (!m_menu_state.catching && !m_menu_state.mapping)
+		m_catch_from.reset();
 	if (m_menu_state.catching && catch_input(event)) {
 		m_menu_pictures = MENU_PICTURES;
 		return Asked::NONE;
@@ -489,10 +540,10 @@ MenuSession::event(const SDL_Event &event)
 		if (event.key.down && !event.key.repeat && !m_display.menu_typing())
 			action = m_hotkeys.key_action(event.key.key, event.key.mod);
 		/* Escape closes a list dropped open first, then the advanced
-		 * options */
-		if (action == Action::MENU && event.key.key == SDLK_ESCAPE && m_display.menu_popup_open()) {
+		 * options, whatever action it has */
+		if (event.key.down && event.key.key == SDLK_ESCAPE && m_display.menu_popup_open()) {
 			action.reset();
-		} else if (action == Action::MENU && event.key.key == SDLK_ESCAPE && m_menu_state.advanced) {
+		} else if (event.key.down && !event.key.repeat && event.key.key == SDLK_ESCAPE && m_menu_state.advanced) {
 			action.reset();
 			m_menu_state.advanced = false;
 		}
@@ -531,6 +582,15 @@ MenuSession::event(const SDL_Event &event)
 	default:
 		break;
 	}
+	/* The test of the page Input stops first, as a list dropped open, on
+	 * the menu's key or any shortcut of a gamepad; while it runs, the
+	 * gamepads and the keys work no part of the menu */
+	const bool testing = m_menu_state.testing;
+
+	if (testing && (action == Action::MENU || (pad && action))) {
+		m_menu_state.testing = false;
+		action.reset();
+	}
 	if (action == Action::QUIT)
 		return Asked::QUIT;
 	if (action == Action::CLOSE_GAME && m_game)
@@ -541,13 +601,15 @@ MenuSession::event(const SDL_Event &event)
 		m_display.toggle_fullscreen();
 	/* The menu's own buttons; the keys of a list dropped open are the list's */
 	for (const MenuNav::Action nav : m_nav.event(event)) {
-		if (action || (!pad && m_display.menu_popup_open()) || !navigate(nav))
+		if (action || testing || (!pad && m_display.menu_popup_open()) || !navigate(nav))
 			continue;
 		m_menu_pictures = MENU_PICTURES;
 		return Asked::CLOSE;
 	}
-	/* The gamepads are Odin's, not Dear ImGui's */
-	if (!pad)
+
+	/* The gamepads are Odin's, not Dear ImGui's; a key let go still
+	 * reaches it, pressed before the test */
+	if (!pad && !(event.type == SDL_EVENT_KEY_DOWN && testing && !m_display.menu_popup_open()))
 		m_display.menu_event(event);
 	m_menu_pictures = MENU_PICTURES;
 	return Asked::NONE;
@@ -612,6 +674,7 @@ MenuSession::open(int page)
 	 * shakes */
 	for (unsigned player = 0; player < 2; player++)
 		m_menu_state.input_device[player] = m_controls.device(player);
+	m_devices_of_other = m_other.has_value();
 	m_display.open_menu(page < 0 ? m_menu_test_page : page);
 	m_menu_pictures = MENU_PICTURES;
 }
@@ -624,6 +687,7 @@ MenuSession::close()
 	m_nav.reset();
 	m_held.reset();
 	m_menu_state.advanced = false;
+	m_menu_state.testing = false;
 	m_menu_state.nav = {};
 	m_keys.swallow();
 	if (m_audio)
@@ -633,8 +697,12 @@ MenuSession::close()
 void
 MenuSession::show(const std::string &game)
 {
+	/* A version: its parent, which the pages show */
+	const std::optional<Game> described = m_games.describe(game);
+	const std::string family = described ? described->family() : game;
+
 	for (size_t g = 0; g < m_menu_state.games.size(); g++)
-		if (m_menu_state.games[g].first == game)
+		if (m_menu_state.games[g].first == family)
 			show_game(g);
 }
 
@@ -719,10 +787,11 @@ MenuSession::fill_bar(BarState &bar) const
 		bar.devices = AudioOut::devices();
 	bar.sound_games.clear();
 	for (const SoundGame &game : state.sound_games)
-		if (m_game && game.name == m_game->name)
+		if (m_game && game.name == m_game->family() && game.mixed)
 			bar.sound_games.push_back(game);
 	bar.link_given = state.link_given;
 	bar.link_next = state.link_next;
+	bar.gaelco = m_game && m_game->machine != "hikaru" && !m_game->link.cabinets;
 	fill_bar_inputs(bar);
 	for (size_t a = 0; a < Hotkeys::ACTIONS; a++)
 		bar.keys[a] = Hotkeys::first_text(m_hotkeys.of(static_cast<Hotkeys::Action>(a)));
@@ -817,7 +886,7 @@ MenuSession::fill_bar_inputs(BarState &bar) const
 		}
 	light_guns(m_game->name, controls, bar.guns, bar.gun, bar.sights);
 	bar.shake = vibration_on(m_settings, m_game->name);
-	bar.light_gun = light_gun_mode_on(m_settings, m_game->name);
+	bar.hide_cursor = m_controls.hides_cursor();
 }
 
 /* As the menu does them: kept in odin.ini the same way */
@@ -861,8 +930,8 @@ MenuSession::do_bar(BarState &bar)
 	if (m_game) {
 		if (bar.can_shake && bar.shake != vibration_on(m_settings, m_game->name))
 			keep_vibration(m_game->name, bar.shake, true);
-		if (bar.sights[0] && bar.light_gun != light_gun_mode_on(m_settings, m_game->name)) {
-			keep_light_gun(m_game->name, bar.light_gun, true);
+		if (bar.hide_cursor != m_controls.hides_cursor()) {
+			keep_hide_cursor(m_game->name, bar.hide_cursor, true, m_controls.panel().takes_mouse());
 			m_controls.follow_cursor();
 		}
 		for (const Controls::Plugged &pad : m_controls.plugged())
@@ -927,6 +996,7 @@ MenuSession::do_bar(BarState &bar)
 			undo();
 		return Ask::NONE;
 	case Ask::HOTKEYS_DEFAULTS:
+		m_hotkeys.set_button(SDL_GAMEPAD_BUTTON_GUIDE);
 		m_hotkeys.reset();
 		keep_hotkeys();
 		return Ask::NONE;

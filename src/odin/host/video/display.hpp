@@ -43,6 +43,8 @@
 #include "odin/host/gfx/host_graphics.hpp"
 #include "odin/host/video/picture.hpp"
 
+#include "odin/machine/chips/pmx1/pmx1_scene.hpp"
+
 namespace odin {
 
 class Hikaru;
@@ -119,6 +121,19 @@ public:
 	 * prepared behind the loading screen with its title; detach before
 	 * the board goes. Then the window is black again. */
 	void attach(Hikaru &board, const std::string &title);
+	/* As above, for a board whose scenes the GPU draws directly, its
+	 * programs kept for the game of that name: call set_scene before the
+	 * end_frame of a frame that has one */
+	void attach_scenes(const std::string &game, const std::string &title);
+	void set_scene(PmxScene scene);
+	/* The DAC of that board puts out black: the picture is black, its
+	 * scenes drawn all the same (its frame buffer keeps them) */
+	void set_blank(bool blank);
+	unsigned scale() const { return m_scale; }
+	DisplayUpscaleMode upscale_mode() const { return m_upscale_mode; }
+	bool draws_native() const { return m_own_native; }
+	bool sorts_per_pixel() const { return m_own_sorts; }
+	unsigned anisotropy() const { return m_anisotropy; }
 	void detach();
 
 	/* A frame of the board: begin_frame before the board runs it,
@@ -233,7 +248,13 @@ private:
 	void show_black();
 	/* The menu, made the first time the bar, a note or the library needs it */
 	void make_menu();
+	/* The programs made before the first frame, with the loading screen:
+	 * Hikaru's lists, the Neon 250's (load) */
 	void prepare_programs(const std::string &title);
+	void prepare_scenes(const std::string &title, const std::vector<uint64_t> &keys);
+	using Progress = std::function<void(unsigned, unsigned)>;
+	void load(const std::function<void(const Progress &)> &make,
+	          const std::function<void(unsigned, unsigned, unsigned, unsigned)> &draw);
 	/* Waits for the frame being drawn. */
 	void finish();
 	void wait_drawing();
@@ -249,6 +270,9 @@ private:
 	void draw_blur(unsigned window_w, unsigned window_h);
 	void draw_sinden_border(unsigned window_w, unsigned window_h);
 	void draw_over(unsigned w, unsigned h, bool bar);
+	/* Draws a frame from a board with its own drawing, in a window of w
+	 * by h */
+	void draw_own(bool late, unsigned w, unsigned h, bool bar);
 	bool build_bar(BarState *bar);
 	void read_picture(uint8_t *pixels);
 	/* The window drawn, shown; `what` it shows, for ODIN_WINDOW_FP */
@@ -299,6 +323,14 @@ private:
 	bool m_logged;
 	HostPicture m_picture;
 	HostImage m_bezel;
+	/* The drawing of a board whose scenes the GPU draws directly, and its
+	 * next scene */
+	std::unique_ptr<Drawing> m_own;
+	PmxScene m_own_scene;
+	unsigned m_own_built = 1;
+	bool m_own_fresh = false;
+	bool m_own_blank = false;
+	bool m_own_native = false, m_own_sorts = false;
 	std::atomic<Sides> m_sides{ Sides::OFF };
 	PictureHole m_hole;
 	SindenBorder m_sinden_border;

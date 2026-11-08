@@ -48,6 +48,10 @@
  * counted is found by halves. The timer is left as it is: counted up to a
  * date in one go or in several, it ends the same.
  *
+ * ATV Track stores the time it reads and loads it back. set_still_turns()
+ * follows such a store like a register, if every other store restores what
+ * was there. The last turn counted leaves its values in memory.
+ *
  * Where the search for waits looks (wait_check()) falls anywhere in the
  * loop; a turn from the middle carries values read by the turn before, and
  * is not kept. Once a turn is, a look inside it goes to its start. */
@@ -146,12 +150,27 @@ uint32_t &Sh4::use_of(Regs &r, uint32_t i)
 	return r.fr[i - USE_FR];
 }
 
-bool Sh4::same_but(const Regs &a, const Regs &b, uint64_t free)
+uint32_t Sh4::value_of(const Regs &r, uint32_t i)
 {
-	Regs x = a, y = b;
+	return use_of(const_cast<Regs &>(r), i);
+}
 
-	each_bit(free, [&](uint32_t i) { use_of(x, i) = use_of(y, i) = 0; });
-	return x == y;
+/* The same registers but the uses in `free`, and with `interrupt_free`
+ * what an interrupt leaves (SPC, SSR, SGR, MACH, MACL, the other bank),
+ * compared where they are */
+bool Sh4::same_but(const Regs &a, const Regs &b, uint64_t free, bool interrupt_free)
+{
+	for (uint32_t i = 0; i < USE_COUNT; i++) {
+		if (!(free & (uint64_t{1} << i)) && value_of(a, i) != value_of(b, i)) {
+			return false;
+		}
+	}
+	if (a.pc != b.pc || a.gbr != b.gbr || a.vbr != b.vbr || a.dbr != b.dbr || a.sr != b.sr || a.fpscr != b.fpscr ||
+	    !std::equal(std::begin(a.xf), std::end(a.xf), std::begin(b.xf))) {
+		return false;
+	}
+	return interrupt_free || (a.mach == b.mach && a.macl == b.macl && a.spc == b.spc && a.ssr == b.ssr &&
+	                          a.sgr == b.sgr && std::equal(std::begin(a.rbank), std::end(a.rbank), std::begin(b.rbank)));
 }
 
 uint64_t Sh4::differ_of(Regs &a, Regs &b)
@@ -175,19 +194,59 @@ void Sh4::clock_noted_read(uint32_t addr, uint32_t size, const void *at)
 
 void Sh4::clock_noted_write(uint32_t addr, uint32_t size, const void *old, const void *value)
 {
-	if (std::memcmp(old, value, size) != 0) {
+	const bool changed = std::memcmp(old, value, size) != 0;
+
+	if (changed && !m_still_on) {
 		m_clock_note.bad = true;
 		return;
 	}
-	m_clock_note.writes.push_back({addr, size, load_bytes(static_cast<const uint8_t *>(value), size), m_clock_note.step});
+	m_clock_note.writes.push_back({addr, size, load_bytes(static_cast<const uint8_t *>(value), size), m_clock_note.step,
+	                               changed, load_bytes(static_cast<const uint8_t *>(old), size)});
 }
 
-/* A read outside the plain memory: one of a TCNT only */
-void Sh4::clock_noted_slow(uint32_t addr, uint32_t size)
+/* Two calls in a turn push returns to the same stack slot, which counts as
+ * restored if it ends with its old value. Reads after a write are the turn's
+ * own, so only the last store is compared. */
+void Sh4::clock_put_back()
+{
+	std::vector<ClockAccess> &writes = m_clock_note.writes, &reads = m_clock_note.reads;
+	const auto same_place = [](const ClockAccess &a, const ClockAccess &b) { return a.addr == b.addr && a.size == b.size; };
+
+	for (size_t i = 0; i < writes.size(); i++) {
+		const ClockAccess first = writes[i];
+
+		if (!first.changed) {
+			continue;
+		}
+		const auto last = std::find_if(writes.rbegin(), writes.rend(), [&](const ClockAccess &a) { return same_place(a, first); });
+
+		if (last->step == first.step || last->value != first.old) {
+			continue;
+		}
+		const ClockAccess end = *last;
+
+		std::erase_if(writes, [&](const ClockAccess &a) { return same_place(a, first) && a.step != end.step; });
+		std::erase_if(reads, [&](const ClockAccess &a) { return same_place(a, first) && a.step > first.step; });
+		for (ClockAccess &a : writes) {
+			if (a.step == end.step) {
+				a.changed = false;
+			}
+		}
+		i = static_cast<size_t>(-1);
+	}
+}
+
+/* A read outside plain memory: only a TCNT, or a page that reads like plain
+ * memory */
+void Sh4::clock_noted_slow(uint32_t addr, uint32_t size, uint64_t value)
 {
 	const uint32_t top = addr >> 24, reg = addr & 0xFFFFFF;
 	uint32_t channel = 3;
 
+	if (still_page(addr)) {
+		m_clock_note.reads.push_back({addr, size, value, m_clock_note.step});
+		return;
+	}
 	for (uint32_t ch = 0; ch < 3; ch++) {
 		if (reg == tcnt(ch)) {
 			channel = ch;
@@ -253,7 +312,7 @@ bool Sh4::clock_step(std::vector<ClockStep> &steps, std::vector<std::pair<uint32
 	op.idx = 0;
 	first.op = op;
 	first.before = m_r;
-	if (!uses(op, first.use)) {
+	if (!uses(op, first.use) || (first.use.still && !m_still_on)) {
 		return false;
 	}
 	if (kind != Kind::Branch && kind != Kind::BranchDelayed && kind != Kind::Jump) {
@@ -284,7 +343,7 @@ bool Sh4::clock_step(std::vector<ClockStep> &steps, std::vector<std::pair<uint32
 		if (u.writes & pr_bit) {
 			second.before.pr = pc + 4;
 		}
-		if (!uses(slot, second.use)) {
+		if (!uses(slot, second.use) || (second.use.still && !m_still_on)) {
 			return false;
 		}
 	}
@@ -339,11 +398,27 @@ bool Sh4::clock_note(ClockTurn &turn)
 		}
 	} while (m_r.pc != start && steps.size() < TURN_MAX);
 	m_clock_note.on = false;
-	if (!ran || m_r.pc != start || m_clock_note.reads_of_timer != 1) {
+	if (!ran || m_r.pc != start) {
 		return false;
 	}
+	clock_put_back();
 	turn.start = before;
 	turn.length = static_cast<uint32_t>(remaining - m_remaining);
+	/* Only plain memory read, and nothing changed there or in the
+	 * registers: nothing can change until something else runs */
+	if (m_clock_note.reads_of_timer == 0 && m_still_on && m_r == before &&
+	    std::none_of(m_clock_note.writes.begin(), m_clock_note.writes.end(),
+	                 [](const ClockAccess &a) { return a.changed; })) {
+		turn.still = true;
+		turn.live = ~uint64_t{0};
+		turn.code = std::move(code);
+		turn.reads = std::move(m_clock_note.reads);
+		turn.writes = std::move(m_clock_note.writes);
+		return true;
+	}
+	if (m_clock_note.reads_of_timer != 1) {
+		return false;
+	}
 	turn.read_at = static_cast<uint32_t>(m_clock_note.read_time - time);
 	turn.channel = m_clock_note.channel;
 	turn.code = std::move(code);
@@ -360,13 +435,15 @@ bool Sh4::clock_follow(ClockTurn &turn, std::vector<ClockStep> &steps)
 	enum : uint8_t { NONE, INT, FLOAT, FLAG };
 	/* What an instruction of `order` makes of a value of type `in`: NONE
 	 * when the turn cannot follow it */
-	const auto type_after = [](Order order, uint8_t in) -> uint8_t {
+	const auto type_after = [this](Order order, uint8_t in) -> uint8_t {
 		switch (order) {
 		case Order::Same:
 			return in;
 		case Order::Add: case Order::Sub: case Order::Neg:
 		case Order::ShiftLeft: case Order::ShiftRight:
 			return in == INT ? INT : NONE;
+		case Order::Not:
+			return in == INT && m_still_on ? INT : NONE;
 		case Order::ToFloat:
 			return in == INT ? FLOAT : NONE;
 		case Order::ToInt:
@@ -378,7 +455,7 @@ bool Sh4::clock_follow(ClockTurn &turn, std::vector<ClockStep> &steps)
 			return in == INT ? FLAG : NONE;
 		case Order::FGreater:
 			return in == FLOAT ? FLAG : NONE;
-		case Order::None:
+		case Order::None: case Order::Store:
 			break;
 		}
 		return NONE;
@@ -392,6 +469,25 @@ bool Sh4::clock_follow(ClockTurn &turn, std::vector<ClockStep> &steps)
 	enum : uint8_t { NO_LOAD, FOLLOWERS_ONLY, ANOTHER, DONE };
 	int32_t load_of[USE_COUNT];
 	std::vector<uint8_t> fresh_load(steps.size(), NO_LOAD);
+	/* Stores of values from the time, and the loads that take one back */
+	struct Kept {
+		const uint8_t *at;
+		uint32_t size, step;
+		uint8_t type;
+	};
+	std::vector<Kept> kept;
+	std::vector<bool> taken(reads.size(), false);
+	const auto place = [this](const ClockAccess &a) -> const uint8_t * {
+		const uint8_t *page = m_rd[a.addr >> PAGE_BITS];
+
+		return page ? page + (a.addr & (PAGE_SIZE - 1)) : nullptr;
+	};
+	const auto at_step = [](const std::vector<ClockAccess> &list, size_t step) {
+		return std::find_if(list.begin(), list.end(), [step](const ClockAccess &a) { return a.step == step; });
+	};
+	const auto over = [](const uint8_t *a, uint32_t a_size, const uint8_t *b, uint32_t b_size) {
+		return a && b && a < b + b_size && b < a + a_size;
+	};
 
 	std::fill(std::begin(load_of), std::end(load_of), -1);
 	for (size_t i = 0; i < steps.size(); i++) {
@@ -410,6 +506,18 @@ bool Sh4::clock_follow(ClockTurn &turn, std::vector<ClockStep> &steps)
 			s.role = ClockRole::Read;
 			s.to = static_cast<uint8_t>(std::countr_zero(u.loaded));
 			type[s.to] = INT;
+		} else if (m_still_on && u.order == Order::Store && !u.twice &&
+		           from_time == uint64_t{1} << ((u.reads >> USE_FR) ? USE_FR + s.op.m : s.op.m)) {
+			const auto write = at_step(turn.writes, i);
+
+			if (write == turn.writes.end() || !place(*write)) {
+				return false;
+			}
+			s.role = ClockRole::Stored;
+			s.from = static_cast<uint8_t>(std::countr_zero(from_time));
+			s.fresh_addr = write->addr;
+			s.fresh_size = write->size;
+			kept.push_back({place(*write), write->size, static_cast<uint32_t>(i), type[s.from]});
 		} else if (from_time) {
 			const uint64_t others = u.reads & ~timed;
 
@@ -445,6 +553,21 @@ bool Sh4::clock_follow(ClockTurn &turn, std::vector<ClockStep> &steps)
 			}
 		} else {
 			s.role = ClockRole::Same;
+
+			const auto read = at_step(reads, i);
+
+			if (read != reads.end() && u.memory && std::has_single_bit(u.loaded)) {
+				for (size_t k = kept.size(); k-- > 0;) {
+					if (place(*read) == kept[k].at && read->size == kept[k].size) {
+						s.role = ClockRole::Taken;
+						s.stored = kept[k].step;
+						s.to = static_cast<uint8_t>(std::countr_zero(u.loaded));
+						type[s.to] = kept[k].type;
+						taken[static_cast<size_t>(read - reads.begin())] = true;
+						break;
+					}
+				}
+			}
 		}
 
 		each_bit(u.reads, [&](uint32_t r) {
@@ -464,7 +587,7 @@ bool Sh4::clock_follow(ClockTurn &turn, std::vector<ClockStep> &steps)
 			load_of[std::countr_zero(u.loaded)] = static_cast<int32_t>(i);
 			fresh_load[i] = FOLLOWERS_ONLY;
 		}
-		if (s.role == ClockRole::Read) {
+		if (s.role == ClockRole::Read || s.role == ClockRole::Taken) {
 			timed = (timed & ~u.writes) | u.loaded;
 		} else if (s.role == ClockRole::Follows) {
 			timed |= u.writes;
@@ -480,6 +603,30 @@ bool Sh4::clock_follow(ClockTurn &turn, std::vector<ClockStep> &steps)
 	    !same_but(end, turn.start, differ)) {
 		return false;
 	}
+
+	/* Only this store writes those bytes, and every other store restores
+	 * what was there */
+	for (size_t k = 0; k < reads.size(); k++) {
+		for (const Kept &store : kept) {
+			if (!taken[k] && over(place(reads[k]), reads[k].size, store.at, store.size)) {
+				return false;
+			}
+		}
+	}
+	for (const ClockAccess &write : turn.writes) {
+		if (steps[write.step].role == ClockRole::Stored) {
+			continue;
+		}
+		if (write.changed) {
+			return false;
+		}
+		for (const Kept &store : kept) {
+			if (over(place(write), write.size, store.at, store.size)) {
+				return false;
+			}
+		}
+	}
+	std::erase_if(turn.writes, [&](const ClockAccess &a) { return steps[a.step].role == ClockRole::Stored; });
 
 	/* The other input of an instruction that follows the read, from a load
 	 * that only such instructions take: read again from the memory */
@@ -510,16 +657,23 @@ bool Sh4::clock_follow(ClockTurn &turn, std::vector<ClockStep> &steps)
 	}
 	turn.reads.clear();
 	for (size_t k = 0; k < reads.size(); k++) {
-		if (!fresh_read[k]) {
+		if (!fresh_read[k] && !taken[k]) {
 			turn.reads.push_back(reads[k]);
 		}
 	}
 	turn.live = live;
 	turn.timed = timed;
 	turn.steps.clear();
-	for (const ClockStep &s : steps) {
-		if (s.role != ClockRole::Same) {
-			turn.steps.push_back(s);
+
+	std::vector<uint32_t> kept_as(steps.size());
+
+	for (size_t i = 0; i < steps.size(); i++) {
+		if (steps[i].role != ClockRole::Same) {
+			kept_as[i] = static_cast<uint32_t>(turn.steps.size());
+			turn.steps.push_back(steps[i]);
+			if (steps[i].role == ClockRole::Taken) {
+				turn.steps.back().stored = kept_as[steps[i].stored];
+			}
 		}
 	}
 	return true;
@@ -533,18 +687,14 @@ bool Sh4::clock_still(const ClockTurn &turn) const
 	const auto plain = [this](uint32_t addr, uint32_t size, uint64_t value) {
 		const uint8_t *page = m_rd[addr >> PAGE_BITS];
 		if (!page) {
-			return false;
+			uint64_t now = 0;
+
+			return still_page(addr) && m_bus.read(addr & PHYSICAL, size, now) && now == value;
 		}
 		return load_bytes(page + (addr & (PAGE_SIZE - 1)), size) == value;
 	};
-	Regs now = m_r, then = turn.start;
-
-	for (uint32_t i = 0; i < USE_COUNT; i++) {
-		if (!(turn.live & (uint64_t{1} << i))) {
-			use_of(now, i) = use_of(then, i) = 0;
-		}
-	}
-	if (m_intc.pending || m_run != Sh4Run::Running || !(now == then)) {
+	/* What an interrupt leaves no known form reads */
+	if (m_intc.pending || m_run != Sh4Run::Running || !same_but(m_r, turn.start, ~turn.live, m_still_on)) {
 		return false;
 	}
 	for (const auto &[pc, word] : turn.code) {
@@ -564,6 +714,11 @@ bool Sh4::clock_still(const ClockTurn &turn) const
 	}
 	for (const ClockStep &s : turn.steps) {
 		if (s.fresh && !m_rd[s.fresh_addr >> PAGE_BITS]) {
+			return false;
+		}
+		/* write_plain() must accept it */
+		if (s.role == ClockRole::Stored &&
+		    m_code_epoch[(s.fresh_addr >> PAGE_BITS) & (PHYSICAL_PAGES - 1)] == m_epoch) {
 			return false;
 		}
 	}
@@ -590,6 +745,11 @@ bool Sh4::clock_turn(const ClockTurn &turn, uint32_t value, ClockValues &out)
 			v = {0, 0, value};
 			continue;
 		}
+		if (s.role == ClockRole::Taken) {
+			v = {0, 0, out.step[s.stored].written};
+			out.timed[s.to] = v.written;
+			continue;
+		}
 		v.from_time = out.timed[s.from];
 		if (s.role == ClockRole::Choice) {
 			if (v.from_time != s.t) {
@@ -598,14 +758,16 @@ bool Sh4::clock_turn(const ClockTurn &turn, uint32_t value, ClockValues &out)
 			}
 			continue;
 		}
+		if (s.role == ClockRole::Stored) {
+			v.written = v.from_time;
+			continue;
+		}
 		if (s.other != NO_USE) {
 			if (s.fresh) {
 				v.other = static_cast<uint32_t>(
 					load_bytes(m_rd[s.fresh_addr >> PAGE_BITS] + (s.fresh_addr & (PAGE_SIZE - 1)), s.fresh_size));
 			} else {
-				Regs before = s.before;
-
-				v.other = use_of(before, s.other);
+				v.other = value_of(s.before, s.other);
 			}
 			use_of(m_r, s.other) = v.other;
 		}
@@ -650,6 +812,7 @@ bool Sh4::clock_ordered(const ClockTurn &turn, const ClockValues &a, const Clock
 			ok = same_half(x.from_time, y.from_time) && moved(x, y, s.from_n ? 1 : -1);
 			break;
 		case Order::Neg:
+		case Order::Not:
 			ok = same_half(x.from_time, y.from_time) && moved(x, y, -1);
 			break;
 		case Order::ShiftLeft:
@@ -682,6 +845,7 @@ bool Sh4::clock_ordered(const ClockTurn &turn, const ClockValues &a, const Clock
 			ok = number(x.from_time) && number(y.from_time) && number(x.other) && x.written == y.written;
 			break;
 		case Order::None:
+		case Order::Store:
 			break;
 		}
 		if (!ok) {
@@ -689,6 +853,14 @@ bool Sh4::clock_ordered(const ClockTurn &turn, const ClockValues &a, const Clock
 		}
 	}
 	return true;
+}
+
+/* What the slice must have left for turns to be counted: one turn and a
+ * cycle for a still turn; else room for the turns, one more, and a block
+ * to end the slice */
+int32_t Sh4::clock_room(const ClockTurn &turn) const
+{
+	return static_cast<int32_t>(turn.still ? turn.length + 1 : 2 * turn.length + BLOCK_MAX);
 }
 
 /* The whole turns that go the way the kept one went, counted without being
@@ -701,9 +873,17 @@ bool Sh4::clock_skip(const ClockTurn &turn)
 	ClockValues &first = m_clock_values[0], &last = m_clock_values[1];
 	const auto read_at = [&](uint32_t k) { return first_read + k * length; };
 
-	/* Room for the turns counted, one more, and a block to end the slice */
-	if (m_remaining < static_cast<int32_t>(2 * length + BLOCK_MAX)) {
+	if (m_remaining < clock_room(turn)) {
 		return false;
+	}
+	if (turn.still) {
+		/* Every whole turn before the end of the slice, as wait_check()
+		 * counts those of a plain wait */
+		const uint32_t whole = static_cast<uint32_t>(m_remaining - 1) / turn.length;
+
+		m_remaining -= static_cast<int32_t>(whole * turn.length);
+		m_skipped += whole * turn.length;
+		return true;
 	}
 	const uint32_t room = static_cast<uint32_t>((static_cast<uint64_t>(m_remaining) - BLOCK_MAX) / length) - 1;
 	const uint32_t v0 = tmu_count_at(turn.channel, first_read);
@@ -740,6 +920,13 @@ bool Sh4::clock_skip(const ClockTurn &turn)
 	m_remaining -= static_cast<int32_t>((lo + 1) * length);
 	m_skipped += (lo + 1) * length;
 	each_bit(turn.timed, [&](uint32_t i) { use_of(m_r, i) = values->timed[i]; });
+	for (size_t i = 0; i < turn.steps.size(); i++) {
+		const ClockStep &s = turn.steps[i];
+
+		if (s.role == ClockRole::Stored) {
+			write_plain(s.fresh_addr, s.fresh_size, values->step[i].written);
+		}
+	}
 	return true;
 }
 
@@ -760,8 +947,8 @@ bool Sh4::clock_wait(uint32_t &mark)
 			mark = inside->second;
 			return false;
 		}
-	} else if (m_remaining < static_cast<int32_t>(2 * kept->length + BLOCK_MAX)) {
-		return false;	/* no room for a turn counted, see clock_skip() */
+	} else if (m_remaining < clock_room(*kept)) {
+		return false;	/* no room for a turn counted */
 	} else if (!clock_still(*kept)) {
 		m_clock_turns.erase(kept);
 		clock_kept();
@@ -781,7 +968,9 @@ bool Sh4::clock_wait(uint32_t &mark)
 		/* A TCNT read, few registers changed: worth a look */
 		const uint64_t differ = differ_of(m_r, m_wait.regs);
 
-		if (!m_timer_read || std::popcount(differ) > static_cast<int>(DIFFER_MAX) ||
+		const bool still = m_still_on && !m_timer_read && differ == 0;
+
+		if ((!m_timer_read && !still) || std::popcount(differ) > static_cast<int>(DIFFER_MAX) ||
 		    !same_but(m_r, m_wait.regs, differ) || !clock_note(turn)) {
 			if (miss.pc != pc) {
 				miss = {pc, 1, 1};

@@ -42,6 +42,7 @@
 #include "odin/host/gfx/host_graphics.hpp"
 #include "odin/host/app/hotkeys.hpp"
 #include "odin/host/ui/menu_kit.hpp"
+#include "odin/host/ui/sound_view.hpp"
 #include "odin/host/input/roles.hpp"
 #include "odin/host/input/seats.hpp"
 #include "odin/host/video/display_options.hpp"
@@ -74,13 +75,16 @@ enum class MenuFolder { NONE, ROMS, BIOS, SAVES, STATES, ARTWORK, LOG };
  * system for; the game to play, and why the one before did not start; what
  * the gamepad asked since the last picture (menu_nav.hpp: the choice moved
  * across and down, the game chosen played) and the name of its button that
- * plays (empty: no gamepad); the games it shows ([library]), the systems
- * of the list, how many games it hides. The thread of the board keeps it
- * and does what changed (library.cpp). */
+ * plays (empty: no gamepad); the games it shows ([library]), by system in
+ * the order of the list and by title in each; the systems of the list, how
+ * many games it hides. The thread of the board keeps it and does what
+ * changed (library.cpp). */
 struct LibraryState {
 	struct Game {
 		std::string name, title, parent;
 		std::vector<std::string> missing;
+		bool gaelco;
+		std::string system;	/* "hikaru", "gaelco" */
 	};
 
 	std::vector<Game> games;
@@ -109,12 +113,12 @@ struct LightGun {
 	bool present = false, aims = false;
 };
 
-/* A game whose optional sound board the user may hear, as the menu and the
- * bar show it: how it is played (Menu::PLAYED: 0 the main board, 1 both on
- * two channels, 2 the four channels apart; -1 another way the command line
- * says, for the game that runs, which `locked` says) and how the cabinet
- * plays it; the level of the optional board in the two channels and the
- * one of the list, in dB. Four channels chosen for the game that runs on
+/* A game whose optional sound board or woofer the user may hear, as the
+ * menu and the bar show it: how it is played (Menu::PLAYED: 0 the main
+ * board, 1 both on two channels, 2 the four channels apart; -1 another way
+ * the command line says, for the game that runs, which `locked` says) and
+ * how the cabinet plays it; the level of the optional board in the two
+ * channels and the one of the list, in dB. Four channels chosen for the game that runs on
  * two, or two on four, wait for it to start again (`later`) */
 struct SoundGame {
 	std::string name, title;
@@ -122,6 +126,16 @@ struct SoundGame {
 	float level, standard;
 	bool locked;
 	bool later = false;
+	/* Smashing Drive: the volume Odin sets at each power-on, of
+	 * START_VOLUMES (-1: another game) */
+	int start = -1;
+	/* A way of playing to choose: two boards, or a woofer (Game::woofer:
+	 * `level` is the woofer's, `cutoff` of WOOFER_CUTOFFS its lows in the
+	 * mix, `cutoff_standard` when the settings do not say) */
+	bool mixed = true, woofer = false;
+	int cutoff = 1, cutoff_standard = 1;
+	/* The part `level` is the level of, as the page Audio names it */
+	const char *level_name = "Woofer";
 };
 
 /* The settings the pages and the bar both change: MenuState has them, the
@@ -229,10 +243,11 @@ struct BarState : BarSettings {
 	std::vector<LightGun> guns;
 	std::array<std::string, 2> gun;
 	std::array<bool, 2> sights{};
-	bool can_shake = false, shake = true, undo = false, light_gun = true;
+	bool can_shake = false, shake = true, undo = false, hide_cursor = false;
 	/* The next cabinet of the link (typed in Settings); the link set by
-	 * ODIN_NETBD */
-	bool link_given = false;
+	 * ODIN_NETBD; the game that runs is on a Gaelco board and does not link
+	 * cabinets (Gaelco Football) */
+	bool link_given = false, gaelco = false;
 	std::string link_next;
 
 	/* What was asked; the page of the settings asked (Menu::Page, -1: the
@@ -295,9 +310,13 @@ struct MenuState : BarSettings {
 	std::array<Hotkeys::Binding, Hotkeys::ACTIONS> hotkeys{};
 	std::optional<std::pair<size_t, size_t>> hotkey_catching;
 	bool hotkeys_default = false;
+	/* The hotkey button ([hotkeys] button), and another one chosen */
+	int hotkey_button = SDL_GAMEPAD_BUTTON_GUIDE;
+	std::optional<int> hotkey_button_asked;
 	/* What the last key or buttons caught took from another action: from
-	 * it to the one changed, the key, else the button held with Guide (or
-	 * GUIDE_ALONE); said at the bottom of the page until the next change */
+	 * it to the one changed, the key, else the button held with the
+	 * hotkey button (or GUIDE_ALONE); said at the bottom of the page
+	 * until the next change */
 	struct HotkeyMoved {
 		size_t from = 0, to = 0;
 		std::optional<HotKey> key;
@@ -361,6 +380,23 @@ struct MenuState : BarSettings {
 	size_t shown = 0, running = 0;
 	/* Each game of `games` links cabinets: the page Link lists those alone */
 	std::vector<bool> game_links;
+	/* Each game of `games` runs on a Gaelco board */
+	std::vector<bool> game_gaelco;
+	/* Each game of `games`: the parts of its sound for the page Audio (those
+	 * of the list, or a left and a right speaker of its main board), whether
+	 * it is played seated (and on which of its other cabinets not), how its
+	 * boards reach the user's speakers */
+	struct GameAudio {
+		std::vector<SoundPart> parts;
+		bool seated = false;
+		std::vector<std::string> standing;
+		SoundFamily family = SoundFamily::ONE;
+	};
+	std::vector<GameAudio> game_audio;
+	/* The page Audio: the part of the drawing pointed at last (-1: none),
+	 * or the user's speakers (YourSpeaker) */
+	int audio_pointed = -1;
+	unsigned audio_pointed_speakers = 0;
 	std::optional<size_t> show;
 	/* The panel of the cabinet of the game shown (its controls and their
 	 * inputs), which are worked now (the controls, then COIN1, COIN2 and
@@ -385,6 +421,9 @@ struct MenuState : BarSettings {
 	/* The joysticks that are no gamepads (a wheel), the same (kind: their
 	 * SDL_JoystickType), and the one asked for the player shown */
 	std::vector<Plugged> joysticks;
+	/* The control of the page Input under the mouse in its list this
+	 * frame (-1: none): the foot says all its inputs */
+	int hovered_control = -1;
 	std::optional<Plugged> want_joystick;
 	/* The light guns and mice seen; that of each player in the game shown
 	 * (its identity; empty: none) and whether the player has a sight there;
@@ -416,9 +455,16 @@ struct MenuState : BarSettings {
 	 * vibration_force) */
 	bool can_shake = false, shake = true;
 	int vibration_force = 100;
-	/* Player 1 has a sight (sights): the mouse aims there, or is a pointer
-	 * ([players.<game>] light_gun_mode) */
-	bool light_gun = true;
+	/* The cursor hidden, the mouse controlling the game, or a normal
+	 * pointer ([players.<game>] hide_cursor) */
+	bool hide_cursor = false;
+	/* The controls of the player shown that the player may turn over
+	 * (GameControl::invertible): "Invert" and their names, their ids, and
+	 * whether each is turned over ([players.<game>] invert; bytes:
+	 * MinGW's GCC reads a word at nullptr to compare two empty
+	 * vector<bool>) */
+	std::vector<std::string> invert_names, invert_ids;
+	std::vector<uint8_t> inverted;
 	/* Its white border for a light gun that finds the screen by it
 	 * ([players.<game>] sinden_border, sinden_border_style,
 	 * sinden_border_size) */
@@ -435,7 +481,7 @@ struct MenuState : BarSettings {
 	bool can_force = false;
 	bool steers = false;
 	int wheel_force = 100;
-	int wheel_rotation = 270;
+	int wheel_rotation = WHEEL_ROTATION;
 	/* The cabinets the game shown was sold in, Standard first
 	 * (Game::cabinets): their ids and names, the one chosen
 	 * ([players.<game>] cabinet), and whether the game that runs plays
@@ -447,6 +493,9 @@ struct MenuState : BarSettings {
 	 * make and model's); its options open over the drawing */
 	PadTuning tuning;
 	bool advanced = false;
+	/* The page Input tests the controls: the gamepads and the keys light
+	 * them up and work no part of the menu (the mouse does) */
+	bool testing = false;
 	/* The animations of the menu ([menu] animations): the row of the
 	 * games moves from the game shown before, since then (seconds of the
 	 * menu), the one shown at the last picture; while something moves the
@@ -552,8 +601,8 @@ public:
 	 * filtering (ANISOTROPY: its values), the window (that many times the
 	 * screen; its sizes shorter where the row is narrow; Custom among them:
 	 * the size the user gives the window by hand), how frames wait for the
-	 * display, the screens (PRESETS: the filters they name; the cabinets'
-	 * first, then Lola Retro's PC monitors), the speed limit */
+	 * display, the screens of the cabinets, or none (PRESETS: the filters
+	 * they name), the speed limit */
 	static constexpr const char *SCALES[] = { "1×", "2×", "3×", "4×", "5×", "6×" };
 	static constexpr const char *UPSCALE_MODES_SHOWN[] = { "Raw", "Snap 2D", "Native 2D" };
 	static constexpr const char *FILTERS[] = { "Off", "2×", "4×", "8×", "16×" };
@@ -566,17 +615,11 @@ public:
 	static constexpr const char *SYNCS[] = { "Off", "On", "Adaptive" };
 	static constexpr const char *APIS_SHOWN[] = { "OpenGL", "Vulkan" };
 	static constexpr const char *SCREENS[] = {
-		"None", "Monitor 29\"", "Projector 50\"", "PC monitor", "PC monitor, flat", "PC monitor good",
-		"PC monitor good, flat", "PC monitor premium", "PC monitor premium, flat", "PC monitor premium+",
-		"PC monitor premium+, flat", "PC monitor extreme", "PC monitor extreme, flat",
+		"None", "Sega monitor 29\"", "Sega projector 50\"", "Gaelco monitor 28\"", "Gaelco monitor 34\"",
 	};
 	static constexpr const char *PRESETS[] = {
-		"", "lola-retro/sega-monitor-29", "lola-retro/sega-projector-50", "lola-retro/pc-monitor-vga",
-		"lola-retro/pc-monitor-vga-flat", "lola-retro/pc-monitor-vga-good",
-		"lola-retro/pc-monitor-vga-good-flat", "lola-retro/pc-monitor-vga-premium",
-		"lola-retro/pc-monitor-vga-premium-flat",
-		"lola-retro/pc-monitor-vga-premium-plus", "lola-retro/pc-monitor-vga-premium-plus-flat",
-		"lola-retro/pc-monitor-vga-extreme", "lola-retro/pc-monitor-vga-extreme-flat",
+		"", "lola-retro/sega-monitor-29", "lola-retro/sega-projector-50", "lola-retro/gaelco-monitor-28",
+		"lola-retro/gaelco-monitor-34",
 	};
 	static_assert(std::size(SCREENS) == std::size(PRESETS));
 	static constexpr const char *PACES[] = { "60 fps (cabinet)", "Unlimited" };
@@ -591,10 +634,11 @@ public:
 	static std::string cabinet_number(unsigned n) { return n == 1 ? "1 · master" : std::to_string(n); }
 	/* What Odin is, and the libraries it is made with: who wrote them,
 	 * their licence */
-	static constexpr const char *WHAT = "Sega Hikaru emulator, as close to the hardware as it gets";
+	static constexpr const char *WHAT = "Sega Hikaru and Gaelco emulator, as close to the hardware as it gets";
 	static constexpr const char *LICENCES[][3] = {
 		{ "Odin", "Réda Chérif-Touil", "GPL 3.0 or later" },
 		{ "Valkyrie (the start of Odin)", "Stefano Teso", "GPL 3.0 or later" },
+		{ "ATV Track boot program", "Samuele Zannoli (MAME)", "BSD-3-Clause" },
 		{ "Dear ImGui", "Omar Cornut", "MIT" },
 		{ "SDL 3", "Sam Lantinga", "zlib" },
 		{ "GLEW", "Milan Ikits, Marcelo Magallon", "BSD / MIT" },
@@ -667,7 +711,7 @@ private:
 	 * whole and torn, the timer of VON4 at 1× and in each upscaling mode
 	 * at 4×, a close-up of each CRT screen (in the order of PRESETS) */
 	enum Picture { UPSCALE = 0, FILTER = UPSCALE + 6, SCREEN = FILTER + 5, WHOLE, TORN, MODE, CRT = MODE + 4,
-	               PICTURES = CRT + 13 };
+	               PICTURES = CRT + 5 };
 	/* What the left of the page Display shows: what the row pointed at
 	 * or in the frame does */
 	enum Preview {
@@ -713,6 +757,9 @@ private:
 	 * The height it takes, drawn when `draw`. */
 	static std::string help(int page, const MenuState &state);
 	static float input_foot(const MenuKit &kit, MenuState &state, ImVec2 at, float width, float height, bool draw);
+	/* Whether Input says a control there now (framed, under the mouse or
+	 * worked): the keys beside it give it their room */
+	static bool input_tells(const MenuState &state);
 	static std::string hotkeys_help(const MenuState &state);
 	/* A button of a gamepad of that kind (pad_drawing.hpp), as its maker
 	 * prints it */

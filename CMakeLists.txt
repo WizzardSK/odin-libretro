@@ -200,7 +200,10 @@ else()
 endif()
 
 set(ODIN_SOURCES
-	host/app/main.cpp host/app/cpu_check.cpp host/app/options.cpp
+	host/app/main.cpp host/app/cpu_check.cpp host/app/options.cpp host/app/atvtrack_play.cpp
+	machine/boards/atvtrack/atvtrack.cpp machine/boards/atvtrack/atvtrack_state.cpp machine/boards/atvtrack/atvtrack_fpga.cpp
+	machine/chips/pmx1/pmx1.cpp machine/chips/pmx1/pmx1_core.cpp machine/chips/pmx1/pmx1_scene.cpp
+	machine/chips/pmx1/pmx1_host.cpp machine/chips/pmx1/pmx1_ta.cpp
 	host/ui/menu_session.cpp host/ui/menu_session_input.cpp
 	host/ui/menu_session_state.cpp host/app/session.cpp
 	host/app/library.cpp host/video/display.cpp
@@ -208,16 +211,18 @@ set(ODIN_SOURCES
 	host/gfx/host_graphics_gl.cpp host/gfx/host_graphics_vk.cpp
 	host/gfx/vk_common.cpp host/renderer/hikaru/vk/drawing_vk.cpp
 	host/renderer/hikaru/vk/pictures_vk.cpp
+	host/renderer/hikaru/vk/pmx_vk.cpp
 	host/renderer/hikaru/vk/scene_vk.cpp
 	host/renderer/hikaru/vk/translucent_vk.cpp
 	host/renderer/hikaru/gl/drawing_gl.cpp
+	host/renderer/hikaru/gl/pmx_gl.cpp
 	host/renderer/hikaru/gl/pictures_gl.cpp
 	host/renderer/hikaru/gl/programs_gl.cpp
 	host/renderer/hikaru/gl/scene_gl.cpp
 	host/renderer/hikaru/gl/translucent_gl.cpp
 	host/video/x11_window.cpp host/ui/menu.cpp host/ui/menu_input.cpp
 	host/ui/menu_pages.cpp host/ui/menu_library.cpp
-	host/ui/menu_bar.cpp host/ui/cabinet_view.cpp
+	host/ui/menu_bar.cpp host/ui/cabinet_view.cpp host/ui/sound_parts.cpp host/ui/sound_view.cpp
 	host/ui/menu_kit.cpp host/ui/menu_nav.cpp
 	host/ui/system_fonts.cpp host/app/rom_files.cpp
 	host/ui/folder_dialog.cpp host/ui/pad_view.cpp
@@ -229,7 +234,7 @@ set(ODIN_SOURCES
 	host/input/evdev.cpp host/input/rawinput.cpp
 	host/input/outputs_network.cpp host/input/sockets.cpp
 	common/cabinet_settings.cpp host/input/control_panel.cpp
-	host/input/bindings.cpp host/app/settings.cpp host/app/games.cpp
+	host/input/bindings.cpp host/input/wheels.cpp host/app/settings.cpp host/app/games.cpp
 	host/input/roles.cpp machine/core/state_file.cpp
 	host/app/user_files.cpp machine/core/worker.cpp
 	machine/boards/hikaru/hikaru.cpp
@@ -320,7 +325,8 @@ set(SPIRV_DIR ${CMAKE_BINARY_DIR}/spirv)
 file(MAKE_DIRECTORY ${SPIRV_DIR}/glsl)
 set(SPIRV)
 foreach(shader whole_picture.vert blend.frag compose.vert compose.frag present.frag
-		mesh.vert mesh.geom mesh.frag sort.frag image.vert image.frag whole_window.vert
+		mesh.vert mesh.geom mesh.frag sort.frag image.vert image.frag pmx.vert pmx.geom pmx.frag pmx_sort.frag
+		whole_window.vert
 		blur.frag show.frag average.frag sides.frag)
 	string(REGEX REPLACE ".*\\." "" stage ${shader})
 	set(out ${SPIRV_DIR}/glsl/${shader}.spv)
@@ -342,6 +348,25 @@ add_custom_command(OUTPUT ${out}
 		${GLSLANG} ${out} ${GLSL}/fragment_lists.glsl ${GLSL}/mesh.frag
 	DEPENDS ${GLSL}/fragment_lists.glsl ${GLSL}/mesh.frag VERBATIM)
 list(APPEND SPIRV ${out})
+set(out ${SPIRV_DIR}/glsl/pmx_native.frag.spv)
+add_custom_command(OUTPUT ${out}
+	COMMAND sh -c "{ echo '#version 450'; echo '#define NATIVE 1'; cat \"$2\"; } | \"$0\" -V --stdin -S frag -o \"$1\""
+		${GLSLANG} ${out} ${GLSL}/pmx.frag
+	DEPENDS ${GLSL}/pmx.frag VERBATIM)
+list(APPEND SPIRV ${out})
+foreach(variant list native_list)
+	set(out ${SPIRV_DIR}/glsl/pmx_${variant}.frag.spv)
+	if(variant STREQUAL "list")
+		set(defines "echo '#define LIST 1'")
+	else()
+		set(defines "echo '#define NATIVE 1'; echo '#define LIST 1'")
+	endif()
+	add_custom_command(OUTPUT ${out}
+		COMMAND sh -c "{ echo '#version 450'; ${defines}; cat \"$2\"; } | \"$0\" -V --stdin -S frag -o \"$1\""
+			${GLSLANG} ${out} ${GLSL}/pmx.frag
+		DEPENDS ${GLSL}/pmx.frag VERBATIM)
+	list(APPEND SPIRV ${out})
+endforeach()
 set(out ${SPIRV_DIR}/glsl/mesh_families.frag.spv)
 add_custom_command(OUTPUT ${out}
 	COMMAND sh -c "{ echo '#version 450'; echo '#define FAMILIES 1'; cat \"$2\"; } | \"$0\" -V --stdin -S frag -o \"$1\""
@@ -426,10 +451,24 @@ endif()
 if(WIN32)
 	target_link_libraries(odin PRIVATE ws2_32 hid setupapi)
 	target_link_options(odin PRIVATE -static)
-	# The manifest (UTF-8) and the icon of odin.exe, found beside odin.rc
+	# The manifest (UTF-8) and icon of odin.exe, found beside odin.rc, and
+	# its version: the numbers of a tag v<a>.<b>.<c>, 0.0.0.0 for a commit
+	set(numbers 0 0 0)
+	if(version MATCHES "^v?([0-9]+)\\.([0-9]+)\\.([0-9]+)")
+		set(numbers ${CMAKE_MATCH_1} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3})
+	endif()
+	list(JOIN numbers "," version_commas)
+	list(JOIN numbers "." version_dots)
+	file(CONFIGURE OUTPUT ${CMAKE_BINARY_DIR}/odin_version.h CONTENT [[
+#define ODIN_VERSION_NUMBERS @version_commas@,0
+#define ODIN_VERSION_DOTS "@version_dots@.0"
+#define ODIN_VERSION_TEXT "@version@"
+]] @ONLY)
 	target_sources(odin PRIVATE src/odin/host/app/odin.rc)
 	set_property(SOURCE src/odin/host/app/odin.rc APPEND PROPERTY INCLUDE_DIRECTORIES
-		${CMAKE_SOURCE_DIR}/src/odin/host/app)
+		${CMAKE_SOURCE_DIR}/src/odin/host/app ${CMAKE_BINARY_DIR})
+	set_property(SOURCE src/odin/host/app/odin.rc APPEND PROPERTY OBJECT_DEPENDS
+		${CMAKE_BINARY_DIR}/odin_version.h)
 endif()
 target_link_libraries(odin PRIVATE odin_deps odin_sdl)
 

@@ -27,6 +27,7 @@
 
 #include "odin/host/video/display.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cinttypes>
@@ -317,8 +318,105 @@ Display::attach(Hikaru &board, const std::string &title)
 }
 
 void
+Display::attach_scenes(const std::string &game, const std::string &title)
+{
+	std::string seed, kept, made;
+	std::vector<uint64_t> keys;
+
+	find_program_lists(game, seed, kept, made);
+	for (const std::string *list : { &seed, &kept })
+		if (!list->empty())
+			for (const uint64_t key : read_pmx_list(*list))
+				if (std::find(keys.begin(), keys.end(), key) == keys.end())
+					keys.push_back(key);
+	run([this, &made] {
+		m_own = m_graphics->make_drawing();
+		m_own->keep_programs_in(made);
+		m_own_built = 1;
+		m_own_native = m_own->draws_native();
+		m_own_sorts = m_own->sorts_per_pixel();
+		m_graphics->set_waits(false);
+		m_waits = false;
+	});
+	m_own_fresh = false;
+	m_frame = 0;
+	m_speed_since = m_speed_last = m_speed_longest = 0;
+	m_title_since = 0;
+	m_fps = 0.0f;
+	m_title = std::string("Odin - ") + title + " [" + m_graphics->api() + "]";
+	SDL_SetWindowTitle(m_window, m_title.c_str());
+	prepare_scenes(title, keys);
+	if (!kept.empty())
+		run([this, &kept] { m_own->list_pmx_in(kept); });
+	set_vsync(m_vsync);
+}
+
+/* The last one may still be drawing */
+void
+Display::set_scene(PmxScene scene)
+{
+	finish();
+	m_own_scene = std::move(scene);
+	m_own_fresh = true;
+}
+
+void
+Display::set_blank(bool blank)
+{
+	if (blank == m_own_blank)
+		return;
+	finish();
+	m_own_blank = blank;
+}
+
+/* On the drawing thread */
+void
+Display::draw_own(bool late, unsigned w, unsigned h, bool bar)
+{
+	m_own->set_filter(m_filter);
+	if (m_own_fresh) {
+		/* It rebuilds its pictures each time */
+		if (m_scale != m_own_built) {
+			m_own->set_scale(m_scale);
+			m_own_built = m_scale;
+		}
+		m_own->draw_pmx(m_own_scene, m_anisotropy);
+		m_own_fresh = false;
+	}
+	if (m_own_blank) {
+		/* Black where the picture goes, the bezel and the bar over it; no
+		 * blur of it at the sides */
+		const HostPicture drawn = m_own->frame_picture();
+
+		m_graphics->clear_window(w, h);
+		m_picture = HostPicture{ 0, drawn.w, drawn.h };
+	} else {
+		m_own->present(picture_rect(w, h, m_hole), w, h);
+		m_picture = m_own->frame_picture();
+	}
+	screenshot();
+	print_fingerprint();
+	draw_over(w, h, bar);
+	if (const bool wait = late ? m_wait_late : m_wait_on_time; wait != m_waits) {
+		m_graphics->set_waits(wait);
+		m_waits = wait;
+	}
+	present(w, h, "game");
+}
+
+void
 Display::detach()
 {
+	if (m_own) {
+		run([this] { m_own.reset(); });
+		m_own_scene = {};
+		m_own_fresh = m_own_blank = false;
+		m_picture.id = 0;
+		m_title = "Odin";
+		SDL_SetWindowTitle(m_window, "Odin");
+		show_black();
+		return;
+	}
 	if (!m_board)
 		return;
 	m_board->set_screen(nullptr);
@@ -347,11 +445,46 @@ Display::show_black()
 }
 
 /* The programs of the lists of the game are compiled before its first
- * frame, on the drawing thread, with the loading screen drawn at most 60
- * times a second. The window answers meanwhile; its events wait in their
- * queue for the game. */
+ * frame (load) */
 void
 Display::prepare_programs(const std::string &title)
+{
+	load([this](const Progress &progress) { m_renderer->prepare_programs(progress); },
+	     [this, &title](unsigned done, unsigned total, unsigned w, unsigned h) {
+		     m_renderer->draw_loading(title, done, total, w, h);
+	     });
+}
+
+/* The programs of the Neon 250 are made before the first scene, with those
+ * of the keys of the lists of the game (load), the loading screen where the
+ * picture will be */
+void
+Display::prepare_scenes(const std::string &title, const std::vector<uint64_t> &keys)
+{
+	load([this, &keys](const Progress &progress) {
+		     const uint64_t began = host_ns();
+
+		     m_own->prepare_pmx(keys, progress);
+
+		     const unsigned read = m_own->programs_read_back(), compiled = m_own->programs_compiled();
+
+		     std::printf("programs: %u ready in %.1f s, %u of them read back, %u compiled\n", read + compiled,
+		                 static_cast<double>(host_ns() - began) / 1e9, read, compiled);
+	     },
+	     [this, &title](unsigned done, unsigned total, unsigned w, unsigned h) {
+		     const PictureRect rect = picture_rect(w, h);
+
+		     m_own->draw_loading(LoadingScreen::placed(title, done, total, rect.x, rect.y, rect.w, rect.h), w,
+		                         h);
+	     });
+}
+
+/* `make` runs on the drawing thread, its progress drawn by `draw` at most 60
+ * times a second, with the size of the window. The window answers
+ * meanwhile; its events wait in their queue for the game. */
+void
+Display::load(const std::function<void(const Progress &)> &make,
+              const std::function<void(unsigned, unsigned, unsigned, unsigned)> &draw)
 {
 	constexpr uint64_t EVERY_NS = 1000000000 / 60;
 	const auto window_size = [this] {
@@ -365,15 +498,14 @@ Display::prepare_programs(const std::string &title)
 
 	finish();
 	m_drawing->post([&] {
-		m_renderer->prepare_programs([&](unsigned done, unsigned total) {
+		make([&](unsigned done, unsigned total) {
 			const uint64_t now = host_ns();
 
 			if (done && done < total && now - shown < EVERY_NS)
 				return;
 			shown = now;
 			const uint64_t wh = size;
-			m_renderer->draw_loading(title, done, total, static_cast<unsigned>(wh >> 32),
-			                         static_cast<unsigned>(wh));
+			draw(done, total, static_cast<unsigned>(wh >> 32), static_cast<unsigned>(wh));
 			present(static_cast<unsigned>(wh >> 32), static_cast<unsigned>(wh), "loading");
 		});
 	});
@@ -453,7 +585,7 @@ Display::open_menu(int page)
 	m_menu->open(page);
 	/* Behind it, the last picture of the game, or the library as it was
 	 * drawn last */
-	if (m_board) {
+	if (m_board || m_own) {
 		run([this] { m_menu->freeze(m_picture); });
 	} else {
 		int w, h;
@@ -485,7 +617,7 @@ Display::set_paused(bool paused)
 void
 Display::retitle()
 {
-	if (!m_board)
+	if (!m_board && !m_own)
 		return;
 	m_title_since = 0;
 	SDL_SetWindowTitle(m_window, m_menu_shown || m_paused ? (m_title + " (paused)").c_str() : m_title.c_str());
@@ -581,11 +713,17 @@ Display::show_again(BarState *bar)
 {
 	int w, h;
 
-	if (!m_renderer)
+	if (!m_renderer && !m_own)
 		return;
 	finish();
 
 	const bool over = build_bar(bar);
+
+	if (m_own) {
+		SDL_GetWindowSizeInPixels(m_window, &w, &h);
+		run([this, w, h, over] { draw_own(false, static_cast<unsigned>(w), static_cast<unsigned>(h), over); });
+		return;
+	}
 
 	SDL_GetWindowSizeInPixels(m_window, &w, &h);
 	m_drawing->post([this, w, h, over] {
@@ -654,6 +792,8 @@ Display::draw_menu(MenuState &state)
 void
 Display::begin_frame()
 {
+	if (m_own)
+		return;
 	m_renderer->begin_frame();
 }
 
@@ -671,6 +811,16 @@ Display::end_frame(unsigned frame, bool late, BarState *bar)
 	m_wait_write_ns = waited;
 	m_frame = frame;
 	SDL_GetWindowSizeInPixels(m_window, &w, &h);
+	if (m_own) {
+		const bool over = build_bar(bar);
+
+		/* Drawn while the board keeps running */
+		m_drawing->post([this, late, w, h, over] {
+			draw_own(late, static_cast<unsigned>(w), static_cast<unsigned>(h), over);
+		});
+		show_speed();
+		return;
+	}
 	m_renderer->take_frame(frame, static_cast<unsigned>(w), static_cast<unsigned>(h), m_hole);
 	m_logged = m_renderer->frame_is_logged();
 	m_message = m_renderer->message();
@@ -771,7 +921,9 @@ Display::screenshot()
 
 	std::vector<uint8_t> pixels(w * h * 3);
 
-	read_picture(pixels.data());
+	/* None: a board's DAC puts out black */
+	if (m_picture.id)
+		read_picture(pixels.data());
 	std::snprintf(path, sizeof(path), "%s-%06u.ppm", m_shot_prefix, m_frame);
 	write_ppm(path, w, h, pixels.data());
 }
@@ -782,8 +934,9 @@ Display::print_fingerprint()
 	if (!m_fingerprint)
 		return;
 
-	m_pixels.resize(size_t{m_picture.w} * m_picture.h * 3);
-	read_picture(m_pixels.data());
+	m_pixels.assign(size_t{m_picture.w} * m_picture.h * 3, 0);
+	if (m_picture.id)
+		read_picture(m_pixels.data());
 	std::fprintf(stderr, "PICFP frame=%u fp=%016" PRIx64 "\n", m_frame, fnv1a(FNV_START, m_pixels.data(), m_pixels.size()));
 }
 

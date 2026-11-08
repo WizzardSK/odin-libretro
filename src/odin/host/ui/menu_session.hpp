@@ -26,6 +26,7 @@
 #define ODIN_MENU_SESSION_HPP
 
 #include <algorithm>
+#include <map>
 #include <memory>
 #include <optional>
 #include <span>
@@ -107,8 +108,8 @@ public:
 	enum class Asked { NONE, CLOSE, CLOSE_GAME, QUIT };
 
 	MenuSession(const Options &options, Display &display, Keyboard &keys, Controls &controls, Settings &settings,
-	            const std::string &settings_file, const GameList &games, const Game *game, Hikaru *board,
-	            AudioOut *audio, std::unique_ptr<OutputsNetwork> outputs, bool network);
+	            const std::string &settings_file, const GameList &games, const Game *game, const Board *running,
+	            Hikaru *board, AudioOut *audio, std::unique_ptr<OutputsNetwork> outputs, bool network);
 
 	~MenuSession()
 	{
@@ -161,10 +162,10 @@ public:
 	 * into the slot, or back out of it once the reader ejected it; the
 	 * card of the list in hand (-1: none). What the note says of it. */
 	std::string card_in_out();
-	/* The light gun mode of the game that runs turned the other way and
-	 * kept (Hotkeys::Action::LIGHT_GUN); what the note says of it (empty:
-	 * no sight in the game) */
-	std::string light_gun_in_out();
+	/* The cursor of the game that runs hidden or shown, the other way,
+	 * and kept (Hotkeys::Action::LIGHT_GUN); what the note says of it
+	 * (empty: no game, or the controls off) */
+	std::string cursor_in_out();
 	std::string choose_card(int index);
 	/* A new card of a pilot of that name, as the terminal of the game
 	 * makes it (Von4Card), kept under the name in the folder of the cards
@@ -210,6 +211,9 @@ private:
 	/* How long the button that presses is held to skip a control while
 	 * Start mapping: a choice of the emulator */
 	static constexpr Uint64 SKIP_HOLD_MS = 1000;
+	/* How long Escape is held on the page Hotkeys to be the key caught
+	 * (tapped, it lets the catch go): a choice of the emulator */
+	static constexpr Uint64 ESCAPE_HOLD_MS = 1000;
 
 	/* What a button of the menu asks: true for B with no list dropped open,
 	 * the menu to close */
@@ -243,10 +247,18 @@ private:
 	/* The game whose controls the page Input shows: its name and panel */
 	std::string game_shown() const;
 	const ControlPanel &panel_shown() const { return m_other ? *m_other : m_controls.panel(); }
+	/* The joystick of a player in the game shown (0: none), and what the
+	 * host holds for it: of a game that does not run, the gamepad and the
+	 * joystick its settings seat (fill_devices), which the game that runs
+	 * may leave unseated (the library seats no wheel) */
+	SDL_JoystickID joystick_shown(unsigned player) const;
+	HostState host_shown() const;
 	void show_game(size_t game);
 	bool catch_input(const SDL_Event &event);
 	bool catch_hotkey(const SDL_Event &event);
 	void keep_hotkeys();
+	void clear_hotkey(Hotkeys::Action action, size_t slot);
+	void set_hotkey_key(Hotkeys::Action action, size_t slot, const HotKey &key);
 	void caught(const HostInput &input);
 	void change_inputs(bool to_defaults);
 	void clear_inputs();
@@ -263,7 +275,8 @@ private:
 	void keep_device(const std::string &game, unsigned player, InputDevice device, bool runs);
 	void keep_vibration(const std::string &game, bool on, bool runs);
 	void keep_vibration_force(const std::string &game, int percent, bool runs);
-	void keep_light_gun(const std::string &game, bool on, bool runs);
+	void keep_hide_cursor(const std::string &game, bool on, bool runs, bool standard);
+	void keep_inverted(const std::string &game, const std::vector<std::string> &ids, const std::vector<uint8_t> &on);
 	void keep_sinden_border(const std::string &game, const SindenBorder &border, bool runs);
 	void keep_wheel_force(const std::string &game, int percent, bool runs);
 	void keep_wheel_rotation(const std::string &game, int degrees, bool runs);
@@ -273,6 +286,7 @@ private:
 	void light_guns(const std::string &game, const std::vector<GameControl> &controls, std::vector<LightGun> &guns,
 	                std::array<std::string, 2> &gun, std::array<bool, 2> &sights) const;
 	void keep_binding(const Bindings::Line &line, const std::string &game = "");
+	void rebind_panels();
 	void fill_games();
 	void read_menu_settings();
 	void take_card();
@@ -290,6 +304,9 @@ private:
 	/* The game that runs and its board (none: the library), its sound
 	 * (none: no sound), its programs of lamps (none: nothing for them) */
 	const Game *m_game;
+	/* The board that runs (its game, its lamps, its link), and when it is
+	 * a Hikaru, that one (its cards) */
+	const Board *m_running;
 	Hikaru *m_board;
 	AudioOut *m_audio;
 	std::unique_ptr<OutputsNetwork> m_outputs;
@@ -309,6 +326,9 @@ private:
 	Game::Link m_other_link;
 	std::string m_other_title;
 	std::optional<ControlPanel> m_other;
+	/* The game shown does not run: its devices, as its settings seat them,
+	 * at the next fill_devices */
+	bool m_devices_of_other = false;
 	MenuState m_menu_state;
 	/* The inputs as Clear mapping found them, and until when Undo puts them back */
 	Settings::Lines m_cleared;
@@ -323,6 +343,21 @@ private:
 		bool skipped;
 	};
 	std::optional<Held> m_held;
+	/* A part caught (or Map all): where each axis of each joystick was
+	 * as it began (a pedal at rest; none: not known yet), the move of one
+	 * taken from there (on Windows, SDL's first value is the middle until
+	 * the device reports); the axes caught, with where they were, none
+	 * again until back there */
+	std::optional<std::map<SDL_JoystickID, std::vector<std::optional<int16_t>>>> m_catch_from;
+	std::map<std::pair<SDL_JoystickID, size_t>, int> m_catch_held;
+	/* The page Hotkeys: Escape down since then, with those modifiers, as
+	 * that place waited for its key */
+	struct EscapeDown {
+		Uint64 since;
+		SDL_Keymod mods;
+		std::pair<size_t, size_t> place;
+	};
+	std::optional<EscapeDown> m_escape_down;
 	/* A sight caught whole: where the pointer was as it began */
 	struct AimFrom {
 		MenuSlot slot;

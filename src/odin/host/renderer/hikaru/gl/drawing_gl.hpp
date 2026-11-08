@@ -55,6 +55,7 @@ public:
 
 	void set_scale(unsigned scale) override;
 	bool draws_native() const override { return gl::geometry_shaders(); }
+	bool sorts_per_pixel() const override { return gl::fragment_lists() && gl::primitive_ids(); }
 
 	void begin_scene(const odin_display_list_t &list, const SceneDebug &debug) override;
 	void clear_depth() override;
@@ -98,6 +99,11 @@ public:
 	void set_layer(unsigned i, LayerTexels texels, const void *pixels) override;
 	void compose(const Compose &compose, unsigned shown, const bool layers[2]) override;
 	void present(PictureRect rect, unsigned window_w, unsigned window_h) override;
+	void draw_pmx(const PmxScene &scene, unsigned anisotropy) override;
+	void prepare_pmx(const std::vector<uint64_t> &keys,
+	                 const std::function<void(unsigned, unsigned)> &progress) override;
+	/* All its programs are made before the first scene: none to list */
+	void list_pmx_in(const std::string &) override {}
 	HostPicture frame_picture() const override { return { m_frame_fb, width(), height() }; }
 	void set_filter(const std::string &preset) override;
 	void draw_loading(std::span<const LoadingRect> rects, unsigned window_w, unsigned window_h) override;
@@ -117,6 +123,9 @@ public:
 	}
 
 private:
+	struct Pmx;
+	std::shared_ptr<Pmx> m_pmx;
+	void make_pmx(const std::function<void(unsigned, unsigned)> &progress);
 	/* Layers peeled at a time, each with a query of whether it drew, read
 	 * once the batch is done */
 	static constexpr unsigned PEEL_BATCH = 8;

@@ -51,6 +51,10 @@ TEXT(peel_blend_frag, "glsl/peel_blend.frag")
 TEXT(peel_show_frag, "glsl/peel_show.frag")
 
 /* The window */
+TEXT(pmx_vert, "glsl/pmx.vert")
+TEXT(pmx_frag, "glsl/pmx.frag")
+TEXT(pmx_geom, "glsl/pmx.geom")
+TEXT(pmx_sort_frag, "glsl/pmx_sort.frag")
 TEXT(image_vert, "glsl/image.vert")
 TEXT(image_frag, "glsl/image.frag")
 TEXT(whole_window_vert, "glsl/whole_window.vert")

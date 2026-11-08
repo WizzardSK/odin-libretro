@@ -41,28 +41,49 @@ namespace {
 void
 scan_library(LibraryState &state, const GameList &games, const Options &options, const std::string &chosen)
 {
-	RomFiles files(options.rom_path, options.bios_path);
-
 	state.games.clear();
 	state.systems.clear();
 	state.selected = 0;
 	state.hidden = 0;
+
+	RomFiles files(options.rom_path, options.bios_path);
+
 	for (const GameList::Entry &entry : games.entries()) {
 		const std::string &name = entry.name;
-		LibraryState::Game game{ name, entry.title, entry.parent, {} };
+		const bool theirs = entry.machine != "hikaru";
+		const std::string system = theirs ? "gaelco" : entry.machine;
+		LibraryState::Game game{ name, entry.title, entry.parent, {}, theirs, system };
 
-		if (std::find(state.systems.begin(), state.systems.end(), entry.machine) == state.systems.end())
-			state.systems.push_back(entry.machine);
-		for (const RomFiles::File &file : games.missing(files, name))
-			game.missing.push_back(file.name + " (" + file.set_of(name) + ".zip)");
-		if (!state.filter.shows(entry.machine, !entry.parent.empty(), game.missing.empty())) {
+		if (std::find(state.systems.begin(), state.systems.end(), system) == state.systems.end())
+			state.systems.push_back(system);
+		/* Each file it lacks; a set that is nowhere, its zip alone */
+		for (const RomFiles::File &file : games.missing(files, name)) {
+			const std::string set = file.set_of(name) + ".zip";
+
+			if (files.set_there(name, file))
+				game.missing.push_back(file.name + " (" + set + ")");
+			else if (std::find(game.missing.begin(), game.missing.end(), set) == game.missing.end())
+				game.missing.push_back(set);
+		}
+		if (!state.filter.shows(system, !entry.parent.empty(), game.missing.empty())) {
 			state.hidden++;
 			continue;
 		}
-		if (name == chosen)
-			state.selected = static_cast<int>(state.games.size());
 		state.games.push_back(std::move(game));
 	}
+
+	/* By system, in the order of the list, and by title in each */
+	const auto rank = [&state](const LibraryState::Game &game) {
+		return std::find(state.systems.begin(), state.systems.end(), game.system) - state.systems.begin();
+	};
+	const auto before = [&](const LibraryState::Game &a, const LibraryState::Game &b) {
+		return rank(a) != rank(b) ? rank(a) < rank(b) : title_before(a.title, b.title);
+	};
+
+	std::stable_sort(state.games.begin(), state.games.end(), before);
+	for (size_t i = 0; i < state.games.size(); i++)
+		if (state.games[i].name == chosen)
+			state.selected = static_cast<int>(i);
 	state.roms = options.rom_path;
 	state.bios = options.bios_path;
 	state.roms_given = options.given.roms;
@@ -144,7 +165,7 @@ library(const Options &command, const GameList &games, Settings &settings, const
 
 	controls.set_pointers(pointers);
 	MenuSession menus(options, display, keys, controls, settings, settings_file, games, nullptr, nullptr, nullptr,
-	                  nullptr, network_on(settings));
+	                  nullptr, nullptr, network_on(settings));
 	LibraryState state;
 	BarState bar;
 	Uint64 note_until = 0;
