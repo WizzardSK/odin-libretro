@@ -868,7 +868,7 @@ retro_core_option_definition option_defs[] = {
 	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "4.0" }, { "option", "Woofer Only" }, { nullptr, nullptr } },
 	  "mix" },
 	{ "odin_atvtrack_option_level", "Woofer Level",
-	  "The woofer of ATV Track against the speakers, with Sound Mode Both or 4.0.",
+	  "The woofer of ATV Track against the speakers, with Sound Mode Both, 4.0 or Woofer Only.",
 	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
 	  "0" },
 	{ "odin_atvtrack_woofer_cutoff", "Woofer Cutoff",
@@ -880,7 +880,7 @@ retro_core_option_definition option_defs[] = {
 	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "4.0" }, { "option", "Woofer Only" }, { nullptr, nullptr } },
 	  "mix" },
 	{ "odin_gfootbal_option_level", "Woofer Level",
-	  "The woofer of Gaelco Football against the speakers, with Sound Mode Both or 4.0.",
+	  "The woofer of Gaelco Football against the speakers, with Sound Mode Both, 4.0 or Woofer Only.",
 	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
 	  "0" },
 	{ "odin_gfootbal_woofer_cutoff", "Woofer Cutoff",
@@ -892,7 +892,7 @@ retro_core_option_definition option_defs[] = {
 	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "4.0" }, { "option", "Woofer Only" }, { nullptr, nullptr } },
 	  "mix" },
 	{ "odin_smashdrv_option_level", "Woofer Level",
-	  "The woofer of Smashing Drive against the speakers, with Sound Mode Both or 4.0.",
+	  "The woofer of Smashing Drive against the speakers, with Sound Mode Both, 4.0 or Woofer Only.",
 	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
 	  "0" },
 	{ "odin_smashdrv_woofer_cutoff", "Woofer Cutoff",
@@ -1613,8 +1613,13 @@ play_gaelco_sound()
 	 * same as Both (NNshi): it carries more than the woofer plays. */
 	AudioOut::woofer_pairs(m == AudioOut::Mode::OPTION ? AudioOut::Mode::MIX : m, core->gaelco->woofer(),
 	                       core->woofer_low, core->woofer_pairs);
-	AudioOut::interleave(m, core->gaelco->sound(), core->woofer_pairs, AudioOut::gain_of(core->option_level),
-	                     core->mixed);
+	/* The woofer at Woofer Level in every mode that plays it: interleave
+	 * applies a level in Both only, and 4.0 and Woofer Only took the woofer
+	 * as it came (NNshi) */
+	const int32_t gain = AudioOut::gain_of(core->option_level);
+	for (int16_t &w : core->woofer_pairs)
+		w = static_cast<int16_t>(std::clamp<int64_t>((static_cast<int64_t>(w) * gain) >> 15, -0x8000, 0x7FFF));
+	AudioOut::interleave(m, core->gaelco->sound(), core->woofer_pairs, AudioOut::UNITY, core->mixed);
 	hand_sound(core->mixed, quad ? 4 : 2);
 }
 
