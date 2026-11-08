@@ -692,14 +692,28 @@ private:
 		return static_cast<uint16_t>(std::clamp(over ? 0x8000 - value : 0x8000 + value, 0, 0xFFFF));
 	}
 
+	/* The left stick across (or down), else the D-pad all the way, as the
+	 * desktop gives a wheel or a handlebar keys: a keyboard has no stick */
+	static int stick_or_dpad(unsigned player, bool y)
+	{
+		const int value = axis(player, RETRO_DEVICE_INDEX_ANALOG_LEFT, y ? RETRO_DEVICE_ID_ANALOG_Y : RETRO_DEVICE_ID_ANALOG_X);
+
+		if (value)
+			return value;
+		const bool less = pad(player, y ? RETRO_DEVICE_ID_JOYPAD_UP : RETRO_DEVICE_ID_JOYPAD_LEFT);
+		const bool more = pad(player, y ? RETRO_DEVICE_ID_JOYPAD_DOWN : RETRO_DEVICE_ID_JOYPAD_RIGHT);
+
+		return less == more ? 0 : (less ? -0x7FFF : 0x7FFF);
+	}
+
 	static uint16_t analog(const GameControl &control, unsigned player)
 	{
 		const unsigned L = RETRO_DEVICE_INDEX_ANALOG_LEFT, R = RETRO_DEVICE_INDEX_ANALOG_RIGHT;
 
 		switch (control.role) {
 		case Role::STEER:
-		case Role::STICK_X: return channel(control.low, axis(player, L, RETRO_DEVICE_ID_ANALOG_X), false);
-		case Role::STICK_Y: return channel(control.low, axis(player, L, RETRO_DEVICE_ID_ANALOG_Y), false);
+		case Role::STICK_X: return channel(control.low, stick_or_dpad(player, false), false);
+		case Role::STICK_Y: return channel(control.low, stick_or_dpad(player, true), false);
 		case Role::STICK2_X: return channel(control.low, axis(player, R, RETRO_DEVICE_ID_ANALOG_X), false);
 		case Role::STICK2_Y: return channel(control.low, axis(player, R, RETRO_DEVICE_ID_ANALOG_Y), false);
 		case Role::ACCEL: return channel(control.low, trigger(player, RETRO_DEVICE_ID_JOYPAD_R2), true);
