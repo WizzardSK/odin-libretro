@@ -60,7 +60,7 @@ A control the game list gives inputs of the gamepad takes those, as the desktop 
 - **Sound Mode** and **Optional Board Level**: shown only for the three games with an optional sound board, each with its own: Main, Both (the optional board mixed in at Optional Board Level: -12 dB to +12 dB, for NASCAR Arcade -24 dB to 0 dB), 4.0 (the desktop's Quad: four channels, the main board in front, the optional one behind at Optional Board Level, through RetroArch's multi-channel sound, which folds them for stereo; a RetroArch without it gets Both) or Optional Only. Defaults: Planet Harriers and Star Wars Racer Arcade Both at 0 dB, NASCAR Arcade Both at -12 dB (its optional board has the engines).
 - **Anisotropic Filtering**: Off (default) to 16x.
 
-- **Audio Thread** (Restart): Disabled (default) or Enabled, the sound handed to RetroArch's audio thread, which plays what is buffered while a frame takes long.
+- **Audio Thread** (Restart): Enabled (default) or Disabled, the sound handed to RetroArch's audio thread, which plays what is buffered while a frame takes long. Disabled, the Gaelco games' frame times swing once their sound starts.
 
 ## Not there yet
 

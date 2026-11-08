@@ -912,9 +912,9 @@ retro_core_option_definition option_defs[] = {
 	  { { "1", "Off" }, { "2", "2x" }, { "4", "4x" }, { "8", "8x" }, { "16", "16x" }, { nullptr, nullptr } },
 	  "1" },
 	{ "odin_audio_thread", "Audio Thread (Restart)",
-	  "The sound handed to RetroArch's audio thread as the board makes it, instead of in each frame: RetroArch then plays what is buffered while a frame takes long (a shader compiled), where the frames' own sound would stutter. Off by default.",
-	  { { "disabled", "Disabled" }, { "enabled", "Enabled" }, { nullptr, nullptr } },
-	  "disabled" },
+	  "The sound handed to RetroArch's audio thread as the board makes it, instead of in each frame: RetroArch then plays what is buffered while a frame takes long (a shader compiled), where the frames' own sound would stutter. On by default: off, the Gaelco games' frame times swing once their sound starts (NNshi).",
+	  { { "enabled", "Enabled" }, { "disabled", "Disabled" }, { nullptr, nullptr } },
+	  "enabled" },
 	{ nullptr, nullptr, nullptr, { { nullptr, nullptr } }, nullptr },
 };
 
@@ -2104,7 +2104,7 @@ retro_load_game(const retro_game_info *info)
 	{
 		const char *v = option_value("odin_audio_thread");
 		const retro_audio_callback callback{ audio_thread_callback, audio_thread_state };
-		core->audio_thread = v && !std::strcmp(v, "enabled") &&
+		core->audio_thread = (!v || !std::strcmp(v, "enabled")) &&
 		                     environ_cb(RETRO_ENVIRONMENT_SET_AUDIO_CALLBACK, const_cast<retro_audio_callback *>(&callback));
 		std::lock_guard lock(audio_mutex);
 		audio_buffer.clear();
