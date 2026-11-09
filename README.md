@@ -6,9 +6,9 @@ Odin's own README is in [README](README), how to build and run the desktop progr
 
 ## Installing
 
-The core is on its way to the libretro buildbot (Linux x86_64 and aarch64, Windows x64; the recipe is `.gitlab-ci.yml`). Once it is there: in RetroArch, Main Menu > Online Updater > Core Downloader > Odin; until its core info is part of RetroArch's (libretro/libretro-super#2183), also put [`odin_libretro.info`](odin_libretro.info) in RetroArch's `info/` folder. Or by hand from the [buildbot's nightlies](https://buildbot.libretro.com/nightly/): `linux/x86_64/latest/odin_libretro.so.zip`, `windows/x86_64/latest/odin_libretro.dll.zip`, unzipped into RetroArch's `cores/`.
+The core is on the libretro buildbot (Linux x86_64 and aarch64, Windows x64; the recipe is `.gitlab-ci.yml`): in RetroArch, Main Menu > Online Updater > Core Downloader > Odin; its core info comes with RetroArch's (Update Core Info Files). Or by hand from the [buildbot's nightlies](https://buildbot.libretro.com/nightly/): `linux/x86_64/latest/odin_libretro.so.zip`, `linux/aarch64/latest/odin_libretro.so.zip`, `windows/x86_64/latest/odin_libretro.dll.zip`, unzipped into RetroArch's `cores/`.
 
-Until then, the cores are the artifacts of this repository's [CI runs](https://github.com/WizzardSK/odin-libretro/actions/workflows/libretro.yml) on the `libretro` branch (signed in to GitHub). The Linux aarch64 core is tested in RetroArch with both renderers (Planet Harriers at full speed with Threaded Board); Windows testers run the Windows one. Reports go to the Odin thread in #support-forum on the libretro Discord, or to this repository's issues.
+Test builds of changes not yet on the buildbot are the artifacts of this repository's [CI runs](https://github.com/WizzardSK/odin-libretro/actions/workflows/libretro.yml) (signed in to GitHub). The Linux aarch64 core is tested in RetroArch with both renderers (Planet Harriers at full speed with Threaded Board); Windows testers run the Windows one. Reports go to the Odin thread in #support-forum on the libretro Discord, or to this repository's issues.
 
 ## Building
 
