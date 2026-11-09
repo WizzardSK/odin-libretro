@@ -1949,11 +1949,16 @@ retro_get_system_av_info(retro_system_av_info *info)
 	info->geometry.max_width = Renderer::WIDTH * MOST_SCALE;
 	info->geometry.max_height = Renderer::HEIGHT * MOST_SCALE;
 	info->geometry.aspect_ratio = 4.0f / 3.0f;
-	/* The board's frames as the desktop runs them: 60 a second (its own
-	 * timing gives 60.08, hikaru.cpp) */
-	info->timing.fps = 60.0;
+	/* The board's frames as the desktop runs them: a Hikaru's 60 a second
+	 * (its own timing gives 60.08, hikaru.cpp); a Gaelco board's frame of
+	 * its screen, 59.3916 a second (atvtrack.cpp), as long as the desktop
+	 * holds each (frame_nanoseconds). At 60 a Gaelco game handed over 1 %
+	 * more sound than the frontend played in that time: its buffer full
+	 * and, with audio sync, uneven frames (NNshi) */
+	const bool gaelco = core && core->gaelco;
+	info->timing.fps = gaelco ? 59.3916 : 60.0;
 	/* A Gaelco board's DAC: 32 227 pairs a second */
-	info->timing.sample_rate = core && core->gaelco ? static_cast<double>(AtvTrack::DAC_RATE) : 44100.0;
+	info->timing.sample_rate = gaelco ? static_cast<double>(AtvTrack::DAC_RATE) : 44100.0;
 }
 
 RETRO_API void retro_init(void) {}
