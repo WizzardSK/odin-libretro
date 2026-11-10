@@ -40,6 +40,9 @@
 #include <vector>
 
 #include "libretro.h"
+/* The options, as the desktop's [display] has them (OPTIONS); their
+ * translations in libretro_core_options_intl.h come from Crowdin */
+#include "libretro_core_options.h"
 
 /* Multi-channel sound (RetroArch's libretro.h, experimental; newer than the
  * copy here) */
@@ -820,103 +823,6 @@ struct Core {
 constexpr unsigned MOST_SCALE = 6;
 constexpr unsigned SPEED_FRAMES = 600;
 
-/* The options, as the desktop's [display] has them (OPTIONS) */
-retro_core_option_definition option_defs[] = {
-	{ "odin_renderer", "Renderer (Restart)",
-	  "OpenGL or Vulkan. Automatic takes the one of RetroArch's video driver (glcore or vulkan).",
-	  { { "auto", "Automatic" }, { "opengl", "OpenGL" }, { "vulkan", "Vulkan" }, { nullptr, nullptr } },
-	  "auto" },
-	{ "odin_scale", "Internal Resolution",
-	  "The 3D drawn that many times finer than the board's 640x480 screen; the 2D layers stay as they are.",
-	  { { "1", "1x (640x480)" }, { "2", "2x (1280x960)" }, { "3", "3x (1920x1440)" }, { "4", "4x (2560x1920)" },
-	    { "5", "5x (3200x2400)" }, { "6", "6x (3840x2880)" }, { nullptr, nullptr } },
-	  "1" },
-	{ "odin_upscale_mode", "HUD at Higher Resolutions",
-	  "How the meshes flat to the screen (the HUD, its text) are drawn above 1x: Snap, their corners on the board's pixels (default); Native, over the pixels they cover there; Raw, as fine as the rest.",
-	  { { "snap", "Snap" }, { "native", "Native" }, { "raw", "Raw" }, { nullptr, nullptr } },
-	  "snap" },
-	{ "odin_threaded", "Threaded Board (Restart)",
-	  "The board runs the next frame on a thread of its own while the frame before is drawn, as the desktop Odin does: faster on most machines, one frame more of latency. Off: each frame is run and drawn in turn.",
-	  { { "enabled", "Enabled" }, { "disabled", "Disabled" }, { nullptr, nullptr } },
-	  "enabled" },
-	{ "odin_rumble", "Rumble",
-	  "The pads shake as the cabinet does: its rumble outputs, the vibration device the optional sound board drives (Star Wars Racer Arcade) and the shocks of the steering wheel (NASCAR Arcade), as the desktop Odin shakes a gamepad. Large Motor Only leaves the small motor still, for a pad where the shocks of the wheel are too much on it.",
-	  { { "enabled", "Enabled" }, { "large", "Large Motor Only" }, { "disabled", "Disabled" }, { nullptr, nullptr } },
-	  "enabled" },
-	{ "odin_pharrier_sound_mode", "Sound Mode",
-	  "Planet Harriers has an optional sound board: Main, the main board alone; Both, the two mixed, the optional one at Optional Board Level; 4.0, as the desktop's Quad: four channels, the main board in the front speakers, the optional one in the rear at Optional Board Level (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both); Optional Only, the optional board alone.",
-	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "4.0" }, { "option", "Optional Only" }, { nullptr, nullptr } },
-	  "mix" },
-	{ "odin_pharrier_option_level", "Optional Board Level",
-	  "The optional sound board of Planet Harriers against the main one, with Sound Mode Both.",
-	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
-	  "0" },
-	{ "odin_swracer_sound_mode", "Sound Mode",
-	  "Star Wars Racer Arcade has an optional sound board: Main, the main board alone; Both, the two mixed, the optional one at Optional Board Level; 4.0, as the desktop's Quad: four channels, the main board in the front speakers, the optional one in the rear at Optional Board Level (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both); Optional Only, the optional board alone.",
-	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "4.0" }, { "option", "Optional Only" }, { nullptr, nullptr } },
-	  "mix" },
-	{ "odin_swracer_option_level", "Optional Board Level",
-	  "The optional sound board of Star Wars Racer Arcade against the main one, with Sound Mode Both.",
-	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
-	  "0" },
-	{ "odin_sgnascar_sound_mode", "Sound Mode",
-	  "NASCAR Arcade has an optional sound board: Main, the main board alone; Both, the two mixed, the optional one at Optional Board Level; 4.0, as the desktop's Quad: four channels, the main board in the front speakers, the optional one in the rear at Optional Board Level (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both); Optional Only, the optional board alone.",
-	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "4.0" }, { "option", "Optional Only" }, { nullptr, nullptr } },
-	  "mix" },
-	{ "odin_sgnascar_option_level", "Optional Board Level",
-	  "The optional sound board of NASCAR Arcade against the main one, with Sound Mode Both or 4.0: -24 dB to 0 dB (its engines are loud).",
-	  { { "-24", "-24 dB" }, { "-23", "-23 dB" }, { "-22", "-22 dB" }, { "-21", "-21 dB" }, { "-20", "-20 dB" }, { "-19", "-19 dB" }, { "-18", "-18 dB" }, { "-17", "-17 dB" }, { "-16", "-16 dB" }, { "-15", "-15 dB" }, { "-14", "-14 dB" }, { "-13", "-13 dB" }, { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { nullptr, nullptr } },
-	  "-12" },
-	{ "odin_atvtrack_sound_mode", "Sound Mode",
-	  "ATV Track has a woofer, fed by the board's second pair of channels: Main, the speakers alone; Both, the woofer's lows mixed in at Woofer Level, as the desktop plays it; 4.0, four channels, the speakers in front and the woofer's channel in the rear (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both); Woofer Only, the woofer alone: its channel's lows below Woofer Cutoff.",
-	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "4.0" }, { "option", "Woofer Only" }, { nullptr, nullptr } },
-	  "mix" },
-	{ "odin_atvtrack_option_level", "Woofer Level",
-	  "The woofer of ATV Track against the speakers, with Sound Mode Both, 4.0 or Woofer Only.",
-	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
-	  "0" },
-	{ "odin_atvtrack_woofer_cutoff", "Woofer Cutoff",
-	  "The lows of the woofer's channel played with Sound Mode Both and Woofer Only: below that many Hz, or all of it (Off).",
-	  { { "80", "80 Hz" }, { "120", "120 Hz" }, { "160", "160 Hz" }, { "200", "200 Hz" }, { "off", "Off" }, { nullptr, nullptr } },
-	  "120" },
-	{ "odin_gfootbal_sound_mode", "Sound Mode",
-	  "Gaelco Football has a woofer, fed by the board's second pair of channels: Main, the speakers alone; Both, the woofer's lows mixed in at Woofer Level, as the desktop plays it; 4.0, four channels, the speakers in front and the woofer's channel in the rear (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both); Woofer Only, the woofer alone: its channel's lows below Woofer Cutoff.",
-	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "4.0" }, { "option", "Woofer Only" }, { nullptr, nullptr } },
-	  "mix" },
-	{ "odin_gfootbal_option_level", "Woofer Level",
-	  "The woofer of Gaelco Football against the speakers, with Sound Mode Both, 4.0 or Woofer Only.",
-	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
-	  "0" },
-	{ "odin_gfootbal_woofer_cutoff", "Woofer Cutoff",
-	  "The lows of the woofer's channel played with Sound Mode Both and Woofer Only: below that many Hz, or all of it (Off).",
-	  { { "80", "80 Hz" }, { "120", "120 Hz" }, { "160", "160 Hz" }, { "200", "200 Hz" }, { "off", "Off" }, { nullptr, nullptr } },
-	  "120" },
-	{ "odin_smashdrv_sound_mode", "Sound Mode",
-	  "Smashing Drive has a woofer, fed by the board's second pair of channels: Main, the speakers alone; Both, the woofer's lows mixed in at Woofer Level, as the desktop plays it; 4.0, four channels, the speakers in front and the woofer's channel in the rear (RetroArch folds them for stereo; a RetroArch without multi-channel sound gets Both); Woofer Only, the woofer alone: its channel's lows below Woofer Cutoff.",
-	  { { "main", "Main" }, { "mix", "Both" }, { "quad", "4.0" }, { "option", "Woofer Only" }, { nullptr, nullptr } },
-	  "mix" },
-	{ "odin_smashdrv_option_level", "Woofer Level",
-	  "The woofer of Smashing Drive against the speakers, with Sound Mode Both, 4.0 or Woofer Only.",
-	  { { "-12", "-12 dB" }, { "-11", "-11 dB" }, { "-10", "-10 dB" }, { "-9", "-9 dB" }, { "-8", "-8 dB" }, { "-7", "-7 dB" }, { "-6", "-6 dB" }, { "-5", "-5 dB" }, { "-4", "-4 dB" }, { "-3", "-3 dB" }, { "-2", "-2 dB" }, { "-1", "-1 dB" }, { "0", "0 dB" }, { "1", "+1 dB" }, { "2", "+2 dB" }, { "3", "+3 dB" }, { "4", "+4 dB" }, { "5", "+5 dB" }, { "6", "+6 dB" }, { "7", "+7 dB" }, { "8", "+8 dB" }, { "9", "+9 dB" }, { "10", "+10 dB" }, { "11", "+11 dB" }, { "12", "+12 dB" }, { nullptr, nullptr } },
-	  "0" },
-	{ "odin_smashdrv_woofer_cutoff", "Woofer Cutoff",
-	  "The lows of the woofer's channel played with Sound Mode Both and Woofer Only: below that many Hz, or all of it (Off).",
-	  { { "80", "80 Hz" }, { "120", "120 Hz" }, { "160", "160 Hz" }, { "200", "200 Hz" }, { "off", "Off" }, { nullptr, nullptr } },
-	  "120" },
-	{ "odin_smashdrv_start_volume", "Start Volume",
-	  "The volume Smashing Drive is set to at each power-on, as an operator would with VOLUME - and VOLUME + (the board keeps none of its own at first).",
-	  { { "0", "0" }, { "25", "25" }, { "50", "50" }, { "75", "75" }, { "96", "96" }, { nullptr, nullptr } },
-	  "75" },
-	{ "odin_anisotropy", "Anisotropic Filtering",
-	  "Of the texture filter; Off as on the board.",
-	  { { "1", "Off" }, { "2", "2x" }, { "4", "4x" }, { "8", "8x" }, { "16", "16x" }, { nullptr, nullptr } },
-	  "1" },
-	{ "odin_audio_thread", "Audio Thread (Restart)",
-	  "The sound handed to RetroArch's audio thread as the board makes it, instead of in each frame: RetroArch then plays what is buffered while a frame takes long (a shader compiled), where the frames' own sound would stutter. Off by default.",
-	  { { "disabled", "Disabled" }, { "enabled", "Enabled" }, { nullptr, nullptr } },
-	  "disabled" },
-	{ nullptr, nullptr, nullptr, { { nullptr, nullptr } }, nullptr },
-};
 
 /* The games with an optional sound board, whose Sound Mode and Optional
  * Board Level the options have; NASCAR Arcade (original) takes those of
@@ -1901,7 +1807,8 @@ retro_set_environment(retro_environment_t cb)
 		log_cb = logging.log;
 	bool no_game = false;
 	cb(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &no_game);
-	cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS, option_defs);
+	bool categories_supported = false;
+	libretro_set_core_options(cb, &categories_supported);
 	show_sound_options(nullptr);
 
 	/* RetroPad, or Light Gun for a sight on the light gun */
