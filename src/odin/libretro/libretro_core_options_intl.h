@@ -1404,12 +1404,12 @@ struct retro_core_options_v2 options_bg = {
 /* RETRO_LANGUAGE_CA */
 
 #define ODIN_RENDERER_LABEL_CA "Renderitzador (Cal reiniciar)"
-#define ODIN_RENDERER_INFO_0_CA NULL
+#define ODIN_RENDERER_INFO_0_CA "OpenGL o Vulkan. L'opció «Automàtic» utilitza la que correspongui al controlador de vídeo de RetroArch (glcore o vulkan)."
 #define OPTION_VAL_AUTO_CA "Automàtic"
 #define OPTION_VAL_OPENGL_CA NULL
 #define OPTION_VAL_VULKAN_CA NULL
 #define ODIN_SCALE_LABEL_CA "Resolució Interna"
-#define ODIN_SCALE_INFO_0_CA NULL
+#define ODIN_SCALE_INFO_0_CA "El 3D es dibuixa amb una resolució moltes vegades superior a la de la pantalla de 640x480 de la placa; les capes 2D es mantenen tal com estan."
 #define OPTION_VAL_1_CA NULL
 #define OPTION_VAL_2_CA NULL
 #define OPTION_VAL_3_CA NULL
@@ -1417,23 +1417,23 @@ struct retro_core_options_v2 options_bg = {
 #define OPTION_VAL_5_CA NULL
 #define OPTION_VAL_6_CA NULL
 #define ODIN_UPSCALE_MODE_LABEL_CA "Interfície en resolucions altes"
-#define ODIN_UPSCALE_MODE_INFO_0_CA NULL
+#define ODIN_UPSCALE_MODE_INFO_0_CA "Com es dibuixen les malles planes a la pantalla (el HUD, el seu text) per sobre de l'escala 1x: *Snap* (ajust), amb els vèrtexs situats sobre els píxels del tauler (per defecte); *Native* (natiu), sobre els píxels que cobreixen; *Raw* (cru), amb la mateixa precisió que la resta."
 #define OPTION_VAL_SNAP_CA "Ajusta"
 #define OPTION_VAL_NATIVE_CA "Nativa"
 #define OPTION_VAL_RAW_CA NULL
 #define ODIN_THREADED_LABEL_CA "Placa multifil (Cal reiniciar)"
-#define ODIN_THREADED_INFO_0_CA NULL
+#define ODIN_THREADED_INFO_0_CA "El tauler processa el fotograma següent en un fil d'execució propi mentre es dibuixa l'anterior, tal com fa l'Odin d'escriptori: és més ràpid a la majoria d'equips, però comporta un fotograma addicional de latència. Desactivat: cada fotograma es processa i es dibuixa de manera seqüencial."
 #define ODIN_RUMBLE_LABEL_CA "Vibració"
-#define ODIN_RUMBLE_INFO_0_CA NULL
+#define ODIN_RUMBLE_INFO_0_CA "Els comandaments vibren tal com ho fa la cabina: ja sigui pels efectes de vibració, pel dispositiu de vibració activat per la placa de so opcional (en el cas de *Star Wars Racer Arcade*) o pels sacsejaments del volant (en el cas de *NASCAR Arcade*); de manera similar a com l'Odin, en un entorn d'escriptori, fa vibrar un comandament. L'opció «Només motor gran» (*Large Motor Only*) manté immòbil el motor petit; això és útil per a comandaments en què els sacsejaments del volant resulten excessius."
 #define OPTION_VAL_LARGE_CA "Només motors grans"
 #define ODIN_PHARRIER_SOUND_MODE_LABEL_CA "Mode d'àudio"
-#define ODIN_PHARRIER_SOUND_MODE_INFO_0_CA NULL
+#define ODIN_PHARRIER_SOUND_MODE_INFO_0_CA "Planet Harriers disposa d'una placa de so opcional: «Main» (només la placa principal); «Both» (totes dues barrejades, amb la placa opcional al seu nivell de volum); «4.0» (equivalent al mode Quad: quatre canals, amb la placa principal als altaveus davanters i l'opcional als posteriors, al seu nivell de volum —RetroArch els combina en estèreo; si RetroArch no admet so multicanal, s'aplica l'opció «Both»); i «Optional Only» (només la placa opcional)."
 #define OPTION_VAL_MAIN_CA "Principal"
 #define OPTION_VAL_MIX_CA "Ambdues"
 #define OPTION_VAL_QUAD_CA NULL
 #define OPTION_VAL_OPTION_CA "Només opcional"
 #define ODIN_PHARRIER_OPTION_LEVEL_LABEL_CA "Volum de la placa opcional"
-#define ODIN_PHARRIER_OPTION_LEVEL_INFO_0_CA NULL
+#define ODIN_PHARRIER_OPTION_LEVEL_INFO_0_CA "La placa de so opcional de Planet Harriers enfront de la principal, amb el mode de so «Both» (ambdues)."
 #define OPTION_VAL_12_CA NULL
 #define OPTION_VAL_11_CA NULL
 #define OPTION_VAL_10_CA NULL
@@ -1459,10 +1459,10 @@ struct retro_core_options_v2 options_bg = {
 #define OPTION_VAL_10_ODIN_PHARRIER_OPTION_LEVEL_CA NULL
 #define OPTION_VAL_11_ODIN_PHARRIER_OPTION_LEVEL_CA NULL
 #define OPTION_VAL_12_ODIN_PHARRIER_OPTION_LEVEL_CA NULL
-#define ODIN_SWRACER_SOUND_MODE_INFO_0_CA NULL
-#define ODIN_SWRACER_OPTION_LEVEL_INFO_0_CA NULL
-#define ODIN_SGNASCAR_SOUND_MODE_INFO_0_CA NULL
-#define ODIN_SGNASCAR_OPTION_LEVEL_INFO_0_CA NULL
+#define ODIN_SWRACER_SOUND_MODE_INFO_0_CA "Star Wars Racer Arcade disposa d'una placa de so opcional: «Main» (només la placa principal); «Both» (ambdues barrejades, amb la placa opcional al seu nivell de volum); «4.0» (com el sistema quadrofònic d'escriptori: quatre canals, amb la placa principal als altaveus davanters i l'opcional als posteriors, al seu nivell de volum —RetroArch els combina en estèreo; si RetroArch no admet so multicanal, s'utilitza l'opció «Both»—); i «Optional Only» (només la placa opcional)."
+#define ODIN_SWRACER_OPTION_LEVEL_INFO_0_CA "La placa de so opcional de Star Wars Racer Arcade enfront de la principal, amb el mode de so «Ambdós» (Both)."
+#define ODIN_SGNASCAR_SOUND_MODE_INFO_0_CA "NASCAR Arcade disposa d'una placa de so opcional: «Main» (només la placa principal); «Both» (ambdues barrejades, amb la placa opcional al nivell definit per a aquesta); «4.0» (equivalent al mode «Quad» d'escriptori: quatre canals, amb la placa principal als altaveus davanters i l'opcional als posteriors, al nivell definit per a aquesta —RetroArch els combina en estèreo; si RetroArch no admet so multicanal, s'utilitza l'opció «Both»—); i «Optional Only» (només la placa opcional)."
+#define ODIN_SGNASCAR_OPTION_LEVEL_INFO_0_CA "La placa de so opcional de NASCAR Arcade enfront de la principal, amb el mode de so «Both» o «4.0»: de -24 dB a 0 dB (els seus motors fan molt soroll)."
 #define OPTION_VAL_24_CA NULL
 #define OPTION_VAL_23_CA NULL
 #define OPTION_VAL_22_CA NULL
@@ -1475,30 +1475,30 @@ struct retro_core_options_v2 options_bg = {
 #define OPTION_VAL_15_CA NULL
 #define OPTION_VAL_14_CA NULL
 #define OPTION_VAL_13_CA NULL
-#define ODIN_ATVTRACK_SOUND_MODE_INFO_0_CA NULL
+#define ODIN_ATVTRACK_SOUND_MODE_INFO_0_CA "ATV Track disposa d'un *woofer*, alimentat pel segon parell de canals de la placa: *Main*, només els altaveus; *Both*, les freqüències baixes del *woofer* barrejades segons el nivell establert (*Woofer Level*), tal com s'escolten a l'escriptori; *4.0*, quatre canals, amb els altaveus al davant i el canal del *woofer* al darrere (RetroArch els combina en estèreo; si RetroArch no admet so multicanal, s'aplica l'opció *Both*); *Woofer Only*, només el *woofer*: les freqüències baixes del seu canal que queden per sota del punt de tall (*Woofer Cutoff*)."
 #define OPTION_VAL_OPTION_ODIN_ATVTRACK_SOUND_MODE_CA "Només Woofer"
 #define ODIN_ATVTRACK_OPTION_LEVEL_LABEL_CA "Nivell de Woofer"
-#define ODIN_ATVTRACK_OPTION_LEVEL_INFO_0_CA NULL
+#define ODIN_ATVTRACK_OPTION_LEVEL_INFO_0_CA "El woofer d'ATV Track contra els altaveus, amb el mode de so Both, 4.0 o Woofer Only."
 #define ODIN_ATVTRACK_WOOFER_CUTOFF_LABEL_CA "Filtre de tall de Woofer"
-#define ODIN_ATVTRACK_WOOFER_CUTOFF_INFO_0_CA NULL
+#define ODIN_ATVTRACK_WOOFER_CUTOFF_INFO_0_CA "Les freqüències baixes del canal del woofer es reprodueixen amb els modes de so «Both» (Ambdós) i «Woofer Only» (Només woofer): per sota d'un determinat nombre d'Hz, o bé tot el rang (Off)."
 #define OPTION_VAL_80_CA NULL
 #define OPTION_VAL_120_CA NULL
 #define OPTION_VAL_160_CA NULL
 #define OPTION_VAL_200_CA NULL
-#define ODIN_GFOOTBAL_SOUND_MODE_INFO_0_CA NULL
-#define ODIN_GFOOTBAL_OPTION_LEVEL_INFO_0_CA NULL
-#define ODIN_SMASHDRV_SOUND_MODE_INFO_0_CA NULL
-#define ODIN_SMASHDRV_OPTION_LEVEL_INFO_0_CA NULL
+#define ODIN_GFOOTBAL_SOUND_MODE_INFO_0_CA "Gaelco Football disposa d'un *woofer*, alimentat pel segon parell de canals de la placa: *Main*, només els altaveus; *Both*, les freqüències baixes del *woofer* barrejades segons el nivell establert (*Woofer Level*), tal com s'escolten a l'escriptori; *4.0*, quatre canals, amb els altaveus al davant i el canal del *woofer* al darrere (RetroArch els combina en estèreo; si RetroArch no admet so multicanal, s'aplica l'opció *Both*); *Woofer Only*, només el *woofer*: les freqüències baixes del seu canal per sota del punt de tall (*Woofer Cutoff*)."
+#define ODIN_GFOOTBAL_OPTION_LEVEL_INFO_0_CA "El *woofer* del Gaelco Football en relació amb els altaveus, amb el mode de so «Ambdós», «4.0» o «Només *woofer*»."
+#define ODIN_SMASHDRV_SOUND_MODE_INFO_0_CA "Smashing Drive disposa d'un *woofer*, alimentat pel segon parell de canals de la placa: *Main*, només els altaveus; *Both*, les freqüències baixes del *woofer* barrejades segons el nivell establert (*Woofer Level*), tal com s'escolta a l'escriptori; *4.0*, quatre canals, amb els altaveus al davant i el canal del *woofer* al darrere (RetroArch els combina en estèreo; si RetroArch no admet so multicanal, s'aplica l'opció *Both*); *Woofer Only*, només el *woofer*: les freqüències baixes del seu canal per sota del punt de tall (*Woofer Cutoff*)."
+#define ODIN_SMASHDRV_OPTION_LEVEL_INFO_0_CA "El woofer de Smashing Drive contra els altaveus, amb el mode de so «Ambdós», «4.0» o «Només woofer»."
 #define ODIN_SMASHDRV_START_VOLUME_LABEL_CA "Volum inicial"
-#define ODIN_SMASHDRV_START_VOLUME_INFO_0_CA NULL
+#define ODIN_SMASHDRV_START_VOLUME_INFO_0_CA "El volum de *Smashing Drive* s'ajusta cada vegada que s'encén l'aparell, tal com ho faria un operador mitjançant els controls VOLUME - i VOLUME + (inicialment, la placa no en conserva cap configuració pròpia)."
 #define ODIN_ANISOTROPY_LABEL_CA "Filtre anisotròpic"
-#define ODIN_ANISOTROPY_INFO_0_CA NULL
+#define ODIN_ANISOTROPY_INFO_0_CA "Del filtre de textures; desactivat, tal com ve a la placa."
 #define OPTION_VAL_2_ODIN_ANISOTROPY_CA NULL
 #define OPTION_VAL_4_ODIN_ANISOTROPY_CA NULL
 #define OPTION_VAL_8_ODIN_ANISOTROPY_CA NULL
 #define OPTION_VAL_16_ODIN_ANISOTROPY_CA NULL
 #define ODIN_AUDIO_THREAD_LABEL_CA "Fil d'àudio (Cal reiniciar)"
-#define ODIN_AUDIO_THREAD_INFO_0_CA NULL
+#define ODIN_AUDIO_THREAD_INFO_0_CA "El so que es lliura al fil d'àudio de RetroArch a mesura que el fomenta la placa, en comptes de fer-ho a cada fotograma: RetroArch reprodueix el que està emmagatzemat a la memòria intermèdia mentre un fotograma triga molt (un shader compilat), on el so propi dels fotogrames s'entretallaria. Desactivat per defecte."
 
 struct retro_core_option_v2_category option_cats_ca[] = {
    { NULL, NULL, NULL },
@@ -3449,7 +3449,7 @@ struct retro_core_options_v2 options_da = {
 
 /* RETRO_LANGUAGE_DE */
 
-#define ODIN_RENDERER_LABEL_DE NULL
+#define ODIN_RENDERER_LABEL_DE "Renderer (Neustart)"
 #define ODIN_RENDERER_INFO_0_DE NULL
 #define OPTION_VAL_AUTO_DE "Automatisch"
 #define OPTION_VAL_OPENGL_DE NULL
@@ -4885,30 +4885,30 @@ struct retro_core_options_v2 options_eo = {
 #define OPTION_VAL_15_ES "-15 dB"
 #define OPTION_VAL_14_ES "-14 dB"
 #define OPTION_VAL_13_ES "-13 dB"
-#define ODIN_ATVTRACK_SOUND_MODE_INFO_0_ES NULL
-#define OPTION_VAL_OPTION_ODIN_ATVTRACK_SOUND_MODE_ES NULL
-#define ODIN_ATVTRACK_OPTION_LEVEL_LABEL_ES NULL
-#define ODIN_ATVTRACK_OPTION_LEVEL_INFO_0_ES NULL
-#define ODIN_ATVTRACK_WOOFER_CUTOFF_LABEL_ES NULL
-#define ODIN_ATVTRACK_WOOFER_CUTOFF_INFO_0_ES NULL
+#define ODIN_ATVTRACK_SOUND_MODE_INFO_0_ES "ATV Track tiene un subwoofer conectado al segundo par de canales de la placa: Principal: solo reproducirá los altavoces; Ambos: mezclará los graves del subwoofer con su nivel, tal y como lo reproduciría la versión para escritorio; 4.0: reproducirá cuatro canales, los altavoces en los canales delanteros y el canal del subwoofer en el trasero (RetroArch generará el estéreo, una versión de RetroArch sin soporte de sonido multicanal seleccionará Ambos); Solo subwoofer: reproducirá solo los graves que estén por debajo del Umbral del subwoofer."
+#define OPTION_VAL_OPTION_ODIN_ATVTRACK_SOUND_MODE_ES "Solo subwoofer"
+#define ODIN_ATVTRACK_OPTION_LEVEL_LABEL_ES "Nivel del subwoofer"
+#define ODIN_ATVTRACK_OPTION_LEVEL_INFO_0_ES "Nivela el volumen del subwoofer de ATV Track respecto a los altavoces al utilizar los modos de sonido Ambos, 4.0 o Solo subwoofer."
+#define ODIN_ATVTRACK_WOOFER_CUTOFF_LABEL_ES "Umbral del subwoofer"
+#define ODIN_ATVTRACK_WOOFER_CUTOFF_INFO_0_ES "Indica los graves que se reproducirán en el canal del subwoofer al seleccionar los modos de sonido Ambos o Solo subwoofer: las frecuencias que estén por debajo del número de hercios indicado o todo (al desactivar la opción)."
 #define OPTION_VAL_80_ES NULL
 #define OPTION_VAL_120_ES NULL
 #define OPTION_VAL_160_ES NULL
 #define OPTION_VAL_200_ES NULL
-#define ODIN_GFOOTBAL_SOUND_MODE_INFO_0_ES NULL
-#define ODIN_GFOOTBAL_OPTION_LEVEL_INFO_0_ES NULL
-#define ODIN_SMASHDRV_SOUND_MODE_INFO_0_ES NULL
-#define ODIN_SMASHDRV_OPTION_LEVEL_INFO_0_ES NULL
-#define ODIN_SMASHDRV_START_VOLUME_LABEL_ES NULL
-#define ODIN_SMASHDRV_START_VOLUME_INFO_0_ES NULL
+#define ODIN_GFOOTBAL_SOUND_MODE_INFO_0_ES "Gaelco Football tiene un subwoofer conectado al segundo par de canales de la placa: Principal: solo reproducirá los altavoces; Ambos: mezclará los graves del subwoofer con su nivel, tal y como lo reproduciría la versión para escritorio; 4.0: reproducirá cuatro canales, los altavoces en los canales delanteros y el canal del subwoofer en el trasero (RetroArch generará el estéreo, una versión de RetroArch sin soporte de sonido multicanal seleccionará Ambos); Solo subwoofer: reproducirá solo los graves que estén por debajo del Umbral del subwoofer."
+#define ODIN_GFOOTBAL_OPTION_LEVEL_INFO_0_ES "Nivela el volumen del subwoofer de Gaelco Football respecto a los altavoces al utilizar los modos de sonido Ambos, 4.0 o Solo subwoofer."
+#define ODIN_SMASHDRV_SOUND_MODE_INFO_0_ES "Smashing Drive tiene un subwoofer conectado al segundo par de canales de la placa: Principal: solo reproducirá los altavoces; Ambos: mezclará los graves del subwoofer con su nivel, tal y como lo reproduciría la versión para escritorio; 4.0: reproducirá cuatro canales, los altavoces en los canales delanteros y el canal del subwoofer en el trasero (RetroArch generará el estéreo, una versión de RetroArch sin soporte de sonido multicanal seleccionará Ambos); Solo subwoofer: reproducirá solo los graves que estén por debajo del Umbral del subwoofer."
+#define ODIN_SMASHDRV_OPTION_LEVEL_INFO_0_ES "Nivela el volumen del subwoofer de Smashing Drive respecto a los altavoces al utilizar los modos de sonido Ambos, 4.0 o Solo subwoofer."
+#define ODIN_SMASHDRV_START_VOLUME_LABEL_ES "Volumen inicial"
+#define ODIN_SMASHDRV_START_VOLUME_INFO_0_ES "El volumen configurado en Smashing Drive durante su arranque, tal y como podría configurar un operador con VOLUME - y VOLUME + (la placa no guarda este valor)."
 #define ODIN_ANISOTROPY_LABEL_ES "Filtrado anisotrópico"
-#define ODIN_ANISOTROPY_INFO_0_ES NULL
+#define ODIN_ANISOTROPY_INFO_0_ES "Filtro de texturas, desactiva esta opción para mostrarlas como lo haría la placa."
 #define OPTION_VAL_2_ODIN_ANISOTROPY_ES "× 2"
 #define OPTION_VAL_4_ODIN_ANISOTROPY_ES "× 4"
 #define OPTION_VAL_8_ODIN_ANISOTROPY_ES "× 8"
 #define OPTION_VAL_16_ODIN_ANISOTROPY_ES "× 16"
 #define ODIN_AUDIO_THREAD_LABEL_ES "Hilo para audio (es necesario reiniciar)"
-#define ODIN_AUDIO_THREAD_INFO_0_ES NULL
+#define ODIN_AUDIO_THREAD_INFO_0_ES "Entrega el sonido al hilo de audio de RetroArch en cuanto lo genere la placa en vez de al pasar un fotograma: de esta manera, RetroArch reproducirá lo que tenga en su búfer si se retrasa un fotograma (por compilación de shaders), evitando que haya tirones en el audio. Esta opción está desactivada por defecto."
 
 struct retro_core_option_v2_category option_cats_es[] = {
    { NULL, NULL, NULL },
@@ -6861,7 +6861,7 @@ struct retro_core_options_v2 options_gl = {
 
 #define ODIN_RENDERER_LABEL_HE NULL
 #define ODIN_RENDERER_INFO_0_HE NULL
-#define OPTION_VAL_AUTO_HE NULL
+#define OPTION_VAL_AUTO_HE "אוטומטי"
 #define OPTION_VAL_OPENGL_HE NULL
 #define OPTION_VAL_VULKAN_HE NULL
 #define ODIN_SCALE_LABEL_HE NULL
@@ -6875,7 +6875,7 @@ struct retro_core_options_v2 options_gl = {
 #define ODIN_UPSCALE_MODE_LABEL_HE NULL
 #define ODIN_UPSCALE_MODE_INFO_0_HE NULL
 #define OPTION_VAL_SNAP_HE NULL
-#define OPTION_VAL_NATIVE_HE NULL
+#define OPTION_VAL_NATIVE_HE "מקורי"
 #define OPTION_VAL_RAW_HE NULL
 #define ODIN_THREADED_LABEL_HE NULL
 #define ODIN_THREADED_INFO_0_HE NULL
@@ -6884,7 +6884,7 @@ struct retro_core_options_v2 options_gl = {
 #define OPTION_VAL_LARGE_HE NULL
 #define ODIN_PHARRIER_SOUND_MODE_LABEL_HE NULL
 #define ODIN_PHARRIER_SOUND_MODE_INFO_0_HE NULL
-#define OPTION_VAL_MAIN_HE NULL
+#define OPTION_VAL_MAIN_HE "ראשי"
 #define OPTION_VAL_MIX_HE NULL
 #define OPTION_VAL_QUAD_HE NULL
 #define OPTION_VAL_OPTION_HE NULL
